@@ -1,0 +1,20 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Atmel Studio Solution File, Format Version 11.00
+Project("{54F91283-7BC4-4236-8FF9-10F437C3AD48}") = "TAJ3850", "TAJ3850\TAJ3850.cproj", "{D3AEA94E-0EBB-488A-951A-70CDC1C9F6CE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|AVR = Debug|AVR
+		Release|AVR = Release|AVR
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D3AEA94E-0EBB-488A-951A-70CDC1C9F6CE}.Debug|AVR.ActiveCfg = Debug|AVR
+		{D3AEA94E-0EBB-488A-951A-70CDC1C9F6CE}.Debug|AVR.Build.0 = Debug|AVR
+		{D3AEA94E-0EBB-488A-951A-70CDC1C9F6CE}.Release|AVR.ActiveCfg = Release|AVR
+		{D3AEA94E-0EBB-488A-951A-70CDC1C9F6CE}.Release|AVR.Build.0 = Release|AVR
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
