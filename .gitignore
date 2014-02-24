@@ -1,1 +1,10 @@
 *~
+*.atsuo
+
+*.elf
+*.hex
+*.lss
+*.map
+*.srec
+
+TAJ3850/TAJ3850/Debug/
