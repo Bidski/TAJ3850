@@ -658,7 +658,7 @@ void uart_open(uint8_t port)
 	if ((cd >= 1) || (cd <= 0x0000FFFF))
 	{
 		USART->mr = 0;
-		USART->MR.over = (over == 16);
+		USART->MR.over = (over == 8); // (over == 16);
 		USART->MR.chrl = 0x3;
 		USART->MR.par = USART_NO_PARITY;
 		
