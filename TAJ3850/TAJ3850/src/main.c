@@ -25,54 +25,16 @@ int main(void)
 	// Start USB stack to authorize VBus monitoring
 	udc_start();
 
-	// Initialise triggers.
-	readUSB			= 0;
-	triggerUSART	= 0;
-
-	// The main loop manages only the power mode
-	// because the USB management is done by interrupt
 	while (true)
 	{
 		// Check to see if there is data in the USB RX FIFO to read in.
-		if (readUSB == 1)
-		{
-			receiveUSBData();
-		}
-		
-		// Check to see if a USART ISR has been triggered.
-		if (triggerUSART & 0x01)
-		{
-			// USART0.
-			motorBusIntteruptController(0);
-		}
-		
-		if (triggerUSART & 0x02)
-		{
-			// USART1.
-			motorBusIntteruptController(1);
-
-		}
-		
-		if (triggerUSART & 0x04)
-		{
-			// USART2.
-			motorBusIntteruptController(2);
-		}
-		
-		if (triggerUSART & 0x08)
-		{
-			// USART3.
-			motorBusIntteruptController(3);
-		}
-		
-		if (triggerUSART & 0x10)
-		{
-			// USART4.
-			motorBusIntteruptController(4);
-		}
+		receiveUSBData();
 		
 		// Check  to see if we need to process any packets.
 		processPacket();
+		
+		// Check to see if there is data in the USB TX FIFO to transmit.
+		transmitUSBData();
 		
 		sleepmgr_enter_sleep();
 	}

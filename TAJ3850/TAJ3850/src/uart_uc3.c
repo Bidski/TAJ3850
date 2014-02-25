@@ -90,8 +90,6 @@ static uint8_t					rxTail[NUM_BUSES] = {0};																								// Pointer to
 static uint16_t					rxPosition[NUM_BUSES] = {0};																							// Pointer to the position within the head of each receive circular buffer.
 static volatile avr32_usart_t	*BUS[NUM_BUSES] = {0};																									// Handle to each USART device.
 
-uint8_t					readUSB = 0;
-uint8_t					triggerUSART = 0;
 
 
 
@@ -144,66 +142,110 @@ uint8_t calculateChecksum(const PACKET packet)
 	return((uint8_t)(~(checksum & 0x000000FF)));
 }
 
+void transmitUSBData(void)
+{
+	if (udi_cdc_is_tx_ready() == TRUE)
+	{
+		if (txTail[BUS_6_USB] != txHead[BUS_6_USB])
+		{
+			// Write byte to the Transmitter Holding Register.
+			if (udi_cdc_putc(txCircBuffer[BUS_6_USB][txTail[BUS_6_USB]].packet[txPosition[BUS_6_USB]]) == FALSE)
+			{
+				udi_cdc_signal_overrun();
+			}
+			
+			else
+			{
+				// Check to see if we just wrote the last parameter.
+
+				// When we write the last parameter we need to jump to the checksum position.
+				// There is a total of 5 bytes before the parameters, less 1 since we start counting from 0.
+				// The length field contains the number of parameters + 2. So, the number of bytes to reach the last parameter is
+				// 5 - 1 + (length - 2) = length + 2.
+				// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
+				if (txPosition[BUS_6_USB] == (txCircBuffer[BUS_6_USB][txTail[BUS_6_USB]].INSTRUCTION_PACKET.nLength + 2))
+				{
+					txPosition[BUS_6_USB] = MAX_PARAMETERS + 5;
+				}
+
+				// We just wrote the checksum byte, so we are done.
+				else if (txPosition[BUS_6_USB] == (MAX_PARAMETERS + 5))
+				{
+					if (++txTail[BUS_6_USB] == NUM_BUSES)
+					{
+						txTail[BUS_6_USB] = 0;
+					}
+
+					txPosition[BUS_6_USB] = 0;
+				}
+
+				else
+				{
+					txPosition[BUS_6_USB]++;
+				}
+			}
+		}
+	}
+}
+
 void receiveUSBData(void)
 {
-	if (udi_cdc_is_rx_ready() == 0)
-	{
-		// No data to read.
-		readUSB = 0;
-		return;
-	}
-
-	if (udi_cdc_read_buf(&rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[rxPosition[BUS_6_USB]], 1) != 0)
-	{
-		// Failed to read a character from the USB.
-		udi_cdc_signal_framing_error();
-	}
-
-	else
-	{
-		// We read a character, now sanity check it.
-		
-		// Verify each byte of the preamble.
-		if ((rxPosition[BUS_6_USB] == 0) && (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[0] != 0xFF))
+//	if (udi_cdc_is_rx_ready() == TRUE)
+//	{
+//		udi_cdc_putc(udi_cdc_multi_get_nb_received_data(0));
+			
+		if (udi_cdc_read_buf(&rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[rxPosition[BUS_6_USB]], 1) != 0)
 		{
-			// Preamble is wrong. Ignore this character and start again.
-			rxPosition[BUS_6_USB] = 0;
-		}
-		
-		else if ((rxPosition[BUS_6_USB] == 1) && (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[1] != 0xFF))
-		{
-			// Preamble is wrong. Ignore this character and start again.
-			rxPosition[BUS_6_USB] = 0;
-		}
-		
-		// When we read in the last parameter we need to jump to the checksum position.
-		// There is a total of 5 bytes before the parameters, less 1 since we start counting from 0. Less another 1 since we need to 
-		// The length field contains the number of parameters + 2. So, the number of bytes to reach the last parameter is
-		// 5 - 1 + (length - 2) = length + 2.
-		// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
-		else if ((rxPosition[BUS_6_USB] > 3) && (rxPosition[BUS_6_USB] == (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].INSTRUCTION_PACKET.nLength + 2)))
-		{
-			rxPosition[BUS_6_USB] = MAX_PARAMETERS + 5;
+			// Failed to read a character from the USB.
+			udi_cdc_signal_framing_error();
 		}
 
-		// We just read in the checksum byte, so we are done.
-		// The checksum byte can be verified later.
-		else if (rxPosition[BUS_6_USB] == (MAX_PARAMETERS + 5))
-		{										
-			if (++rxHead[BUS_6_USB] == NUM_BUSES)
-			{
-				rxHead[BUS_6_USB] = 0;
-			}
-
-			rxPosition[BUS_6_USB] = 0;
-		}
-
-		// There is no sanity checking to perform on this byte.
 		else
 		{
-			rxPosition[BUS_6_USB]++;
+			// We read a character, now sanity check it.
+		
+			// Verify each byte of the preamble.
+			if ((rxPosition[BUS_6_USB] == 0) && (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[0] != 0xFF))
+			{
+				// Preamble is wrong. Ignore this character and start again.
+				rxPosition[BUS_6_USB] = 0;
+			}
+		
+			else if ((rxPosition[BUS_6_USB] == 1) && (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[1] != 0xFF))
+			{
+				// Preamble is wrong. Ignore this character and start again.
+				rxPosition[BUS_6_USB] = 0;
+			}
+		
+			// When we read in the last parameter we need to jump to the checksum position.
+			// There is a total of 5 bytes before the parameters, less 1 since we start counting from 0. Less another 1 since we need to 
+			// The length field contains the number of parameters + 2. So, the number of bytes to reach the last parameter is
+			// 5 - 1 + (length - 2) = length + 2.
+			// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
+			else if ((rxPosition[BUS_6_USB] > 3) && (rxPosition[BUS_6_USB] == (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].INSTRUCTION_PACKET.nLength + 2)))
+			{
+				rxPosition[BUS_6_USB] = MAX_PARAMETERS + 5;
+			}
+
+			// We just read in the checksum byte, so we are done.
+			// The checksum byte can be verified later.
+			else if (rxPosition[BUS_6_USB] == (MAX_PARAMETERS + 5))
+			{										
+				if (++rxHead[BUS_6_USB] == NUM_BUSES)
+				{
+					rxHead[BUS_6_USB] = 0;
+				}
+
+				rxPosition[BUS_6_USB] = 0;
+			}
+
+			// There is no sanity checking to perform on this byte.
+			else
+			{
+				rxPosition[BUS_6_USB]++;
+			}
 		}
-	}	
+//	}
 }
 
 void processPacket(void)
@@ -218,37 +260,40 @@ void processPacket(void)
 		// The transmit buffers are filled as a result of our processing.
 		while (rxTail[bus] != rxHead[bus])
 		{
-			// Verify checksum and instruction.
-			error = isValidInstruction(rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nInstruction);
-			error |= (calculateChecksum(rxCircBuffer[bus][rxTail[bus]]) != rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nChecksum) ? CHECKSUM_ERROR : NO_ERROR;
-			
-			if (error != NO_ERROR)
+			// For packets received via USB, verify checksum and instruction.
+			if (bus == BUS_6_USB)
 			{
-				// Generate an error response.
-				txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nPreamble		= 0xFFFF;
-				txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nID			= RAM[DYNAMIXEL_ID];
-				txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nLength		= 0x02;
-				txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nInstruction	= error;
-				txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nChecksum		= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
-						
-				// Increment the head pointer for the current transmit circular buffer.
-				if (++txHead[bus] == NUM_BUSES)
+				error = isValidInstruction(rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nInstruction);
+				error |= (calculateChecksum(rxCircBuffer[bus][rxTail[bus]]) != rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nChecksum) ? CHECKSUM_ERROR : NO_ERROR;
+			
+				if (error != NO_ERROR)
 				{
-					txHead[bus] = 0;
-				}
+					// Generate an error response.
+					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nPreamble		= 0xFFFF;
+					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nID			= RAM[DYNAMIXEL_ID];
+					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nLength		= 0x02;
+					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nInstruction	= error;
+					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nChecksum		= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
 				
-				// Increment the tail pointer for the current receive circular buffer.
-				if (++rxTail[bus] == NUM_BUSES)
-				{
-					rxTail[bus] = 0;
+					// Increment the head pointer for the current transmit circular buffer.
+					if (++txHead[bus] == NUM_BUSES)
+					{
+						txHead[bus] = 0;
+					}
+				
+					// Increment the tail pointer for the current receive circular buffer.
+					if (++rxTail[bus] == NUM_BUSES)
+					{
+						rxTail[bus] = 0;
+					}
+				
+					error = NO_ERROR;
+					continue;
 				}
-	
-				error = NO_ERROR;		
-				continue;
 			}
 
 			// Check the ID field and see if this message was meant for us.
-			else if ((rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID == RAM[DYNAMIXEL_ID]) || (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID == DYNAMIXEL_ID_BROADCAST))
+			if ((rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID == RAM[DYNAMIXEL_ID]) || (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID == DYNAMIXEL_ID_BROADCAST))
 			{
 				// Packet is meant for us.
 				switch (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nInstruction)
@@ -436,8 +481,29 @@ void processPacket(void)
 	
 			else
 			{
-				// Packet is meant for a different device. So route it to the correct USART accordingly.
-				;
+				// Packet is meant for a different device. So route it to the correct bus.
+				if (bus == BUS_6_USB)
+				{
+					// Packet came from the USB bus, so find the correct USART to route it to.
+					;
+				}
+				
+				else
+				{
+					// Packet came from a USART and it was not addressed to us, so route it to the USB.
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nPreamble		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nPreamble;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nID			= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nLength		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nLength;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nInstruction	= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nInstruction;
+					memcpy(&txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nParameters, &rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nParameters, (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nLength - 2) * sizeof(uint8_t));
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nChecksum		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nChecksum;
+							
+					// Increment the head pointer for the current transmit circular buffer.
+					if (++txHead[BUS_6_USB] == NUM_BUSES)
+					{
+						txHead[BUS_6_USB] = 0;
+					}
+				}
 			}
 			
 			// Increment the tail pointer for the current receive circular buffer.
@@ -458,62 +524,59 @@ void processPacket(void)
 
 void motorBusIntteruptController(uint8_t motorBus)
 {	
-	int txData;
-	
+	// Check for any errors.
+	if (BUS[motorBus]->csr & (AVR32_USART_CSR_OVRE_MASK | AVR32_USART_CSR_FRAME_MASK | AVR32_USART_CSR_PARE_MASK))
+	{
+		// Receiver was not ready or an error occurred.
+		usart_reset_status(BUS[motorBus]);
+	}
+
     // There is a message being received from one of the buses.
 	if (BUS[motorBus]->csr & AVR32_USART_CSR_RXRDY_MASK)
 	{
-		if (usart_read_char(BUS[motorBus], (int *)&rxCircBuffer[motorBus][txTail[motorBus]].packet[txPosition[motorBus]]) != USART_SUCCESS)
+		rxCircBuffer[motorBus][rxHead[motorBus]].packet[rxPosition[motorBus]] = BUS[motorBus]->rhr & 0xFF;
+		
+		// We read a character, now sanity check it.
+	    
+		// Verify each byte of the preamble.
+		if ((rxPosition[motorBus] == 0) && (rxCircBuffer[motorBus][rxHead[motorBus]].packet[0] != 0xFF))
 		{
-			// Receiver was not ready or an error occurred.
-			usart_reset_status(BUS[motorBus]);
-			BUS[motorBus]->idr = AVR32_USART_IER_RXRDY_MASK;
+			// Preamble is wrong. Ignore this character and start again.
+			rxPosition[motorBus] = 0;
+		}
+	    
+		else if ((rxPosition[motorBus] == 1) && (rxCircBuffer[motorBus][rxHead[motorBus]].packet[1] != 0xFF))
+		{
+			// Preamble is wrong. Ignore this character and start again.
+			rxPosition[motorBus] = 0;
+		}
+	    
+		// When we read in the last parameter we need to jump to the checksum position.
+		// There is a total of 5 bytes before the parameters, less 1 since we start counting from 0.
+		// The length field contains the number of parameters + 2. So, the number of bytes to reach the last parameter is
+		// 5 - 1 + (length - 2) = length + 2.
+		// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
+		else if ((rxPosition[motorBus] > 3) && (rxPosition[motorBus] == (rxCircBuffer[motorBus][rxHead[motorBus]].INSTRUCTION_PACKET.nLength + 2)))
+		{
+			rxPosition[motorBus] = MAX_PARAMETERS + 5;
 		}
 
+		// We just read in the checksum byte, so we are done.
+		// The checksum byte can be verified later.
+		else if (rxPosition[motorBus] == (MAX_PARAMETERS + 5))
+		{
+			if (++rxHead[motorBus] == NUM_BUSES)
+			{
+				rxHead[motorBus] = 0;
+			}
+
+			rxPosition[motorBus] = 0;
+		}
+
+		// There is no sanity checking to perform on this byte.
 		else
 		{
-			// We read a character, now sanity check it.
-	    
-			// Verify each byte of the preamble.
-			if ((rxPosition[motorBus] == 0) && (rxCircBuffer[motorBus][rxHead[motorBus]].packet[0] != 0xFF))
-			{
-				// Preamble is wrong. Ignore this character and start again.
-				rxPosition[motorBus] = 0;
-			}
-	    
-			else if ((rxPosition[motorBus] == 1) && (rxCircBuffer[motorBus][rxHead[motorBus]].packet[1] != 0xFF))
-			{
-				// Preamble is wrong. Ignore this character and start again.
-				rxPosition[motorBus] = 0;
-			}
-	    
-			// When we read in the last parameter we need to jump to the checksum position.
-			// There is a total of 5 bytes before the parameters, less 1 since we start counting from 0.
-			// The length field contains the number of parameters + 2. So, the number of bytes to reach the last parameter is
-			// 5 - 1 + (length - 2) = length + 2.
-			// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
-			else if (rxPosition[motorBus] == (rxCircBuffer[motorBus][rxHead[motorBus]].INSTRUCTION_PACKET.nLength + 2))
-			{
-				rxPosition[motorBus] = MAX_PARAMETERS + 5;
-			}
-
-			// We just read in the checksum byte, so we are done.
-			// The checksum byte can be verified later.
-			else if (rxPosition[motorBus] == (MAX_PARAMETERS + 5))
-			{
-				if (++rxHead[motorBus] == NUM_BUSES)
-				{
-					rxHead[motorBus] = 0;
-				}
-
-				rxPosition[motorBus] = 0;
-			}
-
-			// There is no sanity checking to perform on this byte.
-			else
-			{
-				rxPosition[motorBus]++;
-			}
+			rxPosition[motorBus]++;
 		}
 	}
 
@@ -525,10 +588,7 @@ void motorBusIntteruptController(uint8_t motorBus)
 			if (usart_tx_ready(BUS[motorBus]))
 			{
 				// Write byte to the Transmitter Holding Register.
-				txData = txCircBuffer[motorBus][txTail[motorBus]].packet[txPosition[motorBus]];
-			    BUS[motorBus]->THR.txchr = txData & 0x1FF;
-
-				udi_cdc_putc(txData & 0x1FF);
+			    BUS[motorBus]->THR.txchr = txCircBuffer[motorBus][txTail[motorBus]].packet[txPosition[motorBus]] & 0xFF;
 				
 				// Check to see if we just wrote the last parameter.
 
@@ -577,8 +637,6 @@ __attribute__((__interrupt__)) static void usart_interrupt(void)
 void usb_rx_notify(uint8_t port)
 {
 	uint8_t bus;
-	
-	readUSB = 1;
 	
 	// Loop through all USARTs and, if they are open, trigger the TX interrupt.
 	for (bus = BUS_1_MOTORS; bus < BUS_6_USB; bus++)
