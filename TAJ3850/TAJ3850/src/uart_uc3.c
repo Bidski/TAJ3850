@@ -13,7 +13,6 @@
 #define FALSE						0
 #define TRUE						1
 
-#define NUM_BUSES					0x04																												// Number of motor buses plus the USB bus.
 #define NUM_IDS_PER_BUS				0x0F																												// Arbitrary maximum for the number of IDs per motor bus.
 #define BUS_1_MOTORS				0x00
 #define BUS_2_MOTORS				0x01
@@ -21,6 +20,7 @@
 //#define BUS_4_MOTORS				0x03
 //#define BUS_5_MOTORS				0x04
 #define BUS_6_USB					0x03
+#define NUM_BUSES					BUS_6_USB + 1																										// Number of motor buses plus the USB bus.
 
 #define MAX_PACKET_LENGTH			0x85
 #define MAX_PARAMETERS				MAX_PACKET_LENGTH - 6
@@ -79,16 +79,16 @@ uint8_t isValidInstruction(uint8_t instruction);
  ********************************************/
 __attribute__((__section__(".userpage"))) uint8_t RAM[RAM_TABLE_SIZE];																					// Store RAM table in flash user page.
 
-static usart_options_t			usart_options;
+static volatile usart_options_t	usart_options;
 
-static PACKET					txCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)].packet = {0}};		// Transmit circular buffers.
-static PACKET					rxCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)].packet = {0}};		// Receive circular buffers.
-static uint8_t					txHead[NUM_BUSES] = {0};																								// Pointer to the head of each transmit circular buffer.
-static uint8_t					txTail[NUM_BUSES] = {0};																								// Pointer to the tail of each transmit circular buffer.
-static uint16_t					txPosition[NUM_BUSES] = {0};																							// Pointer to the position within the head of each transmit circular buffer.
-static uint8_t					rxHead[NUM_BUSES] = {0};																								// Pointer to the head of each receive circular buffer.
-static uint8_t					rxTail[NUM_BUSES] = {0};																								// Pointer to the tail of each receive circular buffer.
-static uint16_t					rxPosition[NUM_BUSES] = {0};																							// Pointer to the position within the head of each receive circular buffer.
+static volatile PACKET			txCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)].packet = {0}};		// Transmit circular buffers.
+static volatile PACKET			rxCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)].packet = {0}};		// Receive circular buffers.
+static volatile uint8_t			txHead[NUM_BUSES] = {0};																								// Pointer to the head of each transmit circular buffer.
+static volatile uint8_t			txTail[NUM_BUSES] = {0};																								// Pointer to the tail of each transmit circular buffer.
+static volatile uint8_t			txPosition[NUM_BUSES] = {0};																							// Pointer to the position within the head of each transmit circular buffer.
+static volatile uint8_t			rxHead[NUM_BUSES] = {0};																								// Pointer to the head of each receive circular buffer.
+static volatile uint8_t			rxTail[NUM_BUSES] = {0};																								// Pointer to the tail of each receive circular buffer.
+static volatile uint8_t			rxPosition[NUM_BUSES] = {0};																							// Pointer to the position within the head of each receive circular buffer.
 static volatile avr32_usart_t	*BUS[NUM_BUSES] = {0};																									// Handle to each USART device.
 
 
@@ -101,9 +101,10 @@ void initRAM(void)
 	flashc_memset((void *)RAM, 0x00, 8, RAM_TABLE_SIZE, true);
 	flashc_memcpy((void *)RAM, temp, RAM_TABLE_SIZE, true);
 	
-	BUS[0] = ((avr32_usart_t*)AVR32_USART0_ADDRESS);
-	BUS[1] = ((avr32_usart_t*)AVR32_USART1_ADDRESS);
-	BUS[2] = ((avr32_usart_t*)AVR32_USART2_ADDRESS);
+	BUS[BUS_1_MOTORS] = ((avr32_usart_t*)AVR32_USART0_ADDRESS);
+	BUS[BUS_2_MOTORS] = ((avr32_usart_t*)AVR32_USART1_ADDRESS);
+	BUS[BUS_3_MOTORS] = ((avr32_usart_t*)AVR32_USART2_ADDRESS);
+	BUS[BUS_6_USB] = NULL:
 }
 
 uint8_t isValidInstruction(uint8_t instruction)
@@ -166,7 +167,9 @@ void transmitUSBData(void)
 				// We just wrote the checksum byte, so we are done.
 				else if (txPosition[BUS_6_USB] == (MAX_PACKET_LENGTH - 1))
 				{
-					if (++txTail[BUS_6_USB] == NUM_BUSES)
+					txTail[BUS_6_USB]++;
+					
+					if (txTail[BUS_6_USB] == NUM_BUSES)
 					{
 						txTail[BUS_6_USB] = 0;
 					}
@@ -223,7 +226,9 @@ void receiveUSBData(void)
 			// The checksum byte can be verified later.
 			else if (rxPosition[BUS_6_USB] == (MAX_PACKET_LENGTH - 1))
 			{										
-				if (++rxHead[BUS_6_USB] == NUM_BUSES)
+				rxHead[BUS_6_USB]++;
+
+				if (rxHead[BUS_6_USB] == NUM_BUSES)
 				{
 					rxHead[BUS_6_USB] = 0;
 				}
@@ -268,13 +273,17 @@ void processPacket(void)
 					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nChecksum		= calculateChecksum(txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]]);
 				
 					// Increment the head pointer for the current transmit circular buffer.
-					if (++txHead[BUS_6_USB] == NUM_BUSES)
+					txHead[BUS_6_USB]++;
+
+					if (txHead[BUS_6_USB] == NUM_BUSES)
 					{
 						txHead[BUS_6_USB] = 0;
 					}
 				
 					// Increment the tail pointer for the current receive circular buffer.
-					if (++rxTail[BUS_6_USB] == NUM_BUSES)
+					rxTail[BUS_6_USB]++;
+
+					if (rxTail[BUS_6_USB] == NUM_BUSES)
 					{
 						rxTail[BUS_6_USB] = 0;
 					}
@@ -310,7 +319,9 @@ void processPacket(void)
 						txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nInstruction	= NO_ERROR;
 						txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nChecksum		= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
 						
-						if (++txHead[bus] == NUM_BUSES)
+						txHead[bus]++;
+
+						if (txHead[bus] == NUM_BUSES)
 						{
 							txHead[bus] = 0;
 						}
@@ -449,7 +460,7 @@ void processPacket(void)
 				// Replicate received packet across all buses if broadcasting.
 				if (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID == DYNAMIXEL_ID_BROADCAST)
 				{
-					for (txBus = BUS_1_MOTORS; txBus <= BUS_6_USB; txBus++)
+					for (txBus = 0; txBus < NUM_BUSES; txBus++)
 					{
 						// We don't want to broadcast back on to the bus that the message was received on.
 						if (txBus != bus)
@@ -462,7 +473,9 @@ void processPacket(void)
 							txCircBuffer[txBus][txHead[txBus]].INSTRUCTION_PACKET.nChecksum		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nChecksum;
 						
 							// Increment the head pointer for the current transmit circular buffer.
-							if (++txHead[txBus] == NUM_BUSES)
+							txHead[bus]++;
+
+							if (txHead[txBus] == NUM_BUSES)
 							{
 								txHead[txBus] = 0;
 							}
@@ -491,7 +504,9 @@ void processPacket(void)
 					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nChecksum		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nChecksum;
 							
 					// Increment the head pointer for the current transmit circular buffer.
-					if (++txHead[BUS_6_USB] == NUM_BUSES)
+					txHead[BUS_6_USB]++;
+
+					if (txHead[BUS_6_USB] == NUM_BUSES)
 					{
 						txHead[BUS_6_USB] = 0;
 					}
@@ -503,7 +518,7 @@ void processPacket(void)
 		}
 	}
 
-	for (bus = BUS_1_MOTORS; bus < BUS_6_USB; bus++)
+	for (bus = 0; bus < (NUM_BUSES - 1); bus++)
 	{
 		// If UART is open
 		if (BUS[bus]->imr & AVR32_USART_IER_RXRDY_MASK)
@@ -516,6 +531,12 @@ void processPacket(void)
 
 void motorBusIntteruptController(uint8_t motorBus)
 {	
+	// Sanity check input parameter.
+	if (motorBus >= BUS_6_USB)
+	{
+		return;
+	}
+
 	// Check for any errors.
 	if (BUS[motorBus]->csr & (AVR32_USART_CSR_OVRE_MASK | AVR32_USART_CSR_FRAME_MASK | AVR32_USART_CSR_PARE_MASK))
 	{
@@ -557,7 +578,9 @@ void motorBusIntteruptController(uint8_t motorBus)
 		// The checksum byte can be verified later.
 		else if (rxPosition[motorBus] == (MAX_PACKET_LENGTH - 1))
 		{
-			if (++rxHead[motorBus] == NUM_BUSES)
+			rxHead[motorBus]++;
+
+			if (rxHead[motorBus] == NUM_BUSES)
 			{
 				rxHead[motorBus] = 0;
 			}
@@ -597,7 +620,9 @@ void motorBusIntteruptController(uint8_t motorBus)
 				// We just wrote the checksum byte, so we are done.
 				else if (txPosition[motorBus] == (MAX_PACKET_LENGTH - 1))
 				{
-					if (++txTail[motorBus] == NUM_BUSES)
+					txTail[motorBus]++;
+
+					if (txTail[motorBus] == NUM_BUSES)
 					{
 						txTail[motorBus] = 0;
 					}
@@ -623,7 +648,7 @@ void motorBusIntteruptController(uint8_t motorBus)
 
 __attribute__((__interrupt__)) static void usart_interrupt(void)
 {
-	motorBusIntteruptController(1);
+	motorBusIntteruptController(BUS_2_MOTORS);
 }
 
 void usb_rx_notify(uint8_t port)
@@ -631,7 +656,7 @@ void usb_rx_notify(uint8_t port)
 	uint8_t bus;
 	
 	// Loop through all USARTs and, if they are open, trigger the TX interrupt.
-	for (bus = BUS_1_MOTORS; bus < BUS_6_USB; bus++)
+	for (bus = 0; bus < (NUM_BUSES - 1); bus++)
 	{
 		// If UART is open
 		if (BUS[bus]->imr & AVR32_USART_IER_RXRDY_MASK)
