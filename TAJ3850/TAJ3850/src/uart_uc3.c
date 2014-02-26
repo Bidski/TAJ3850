@@ -22,7 +22,8 @@
 //#define BUS_5_MOTORS				0x04
 #define BUS_6_USB					0x03
 
-#define MAX_PARAMETERS				0x7F
+#define MAX_PACKET_LENGTH			0x85
+#define MAX_PARAMETERS				MAX_PACKET_LENGTH - 6
 
 /********************************************
  *			TYPES AND ENUMS					*
@@ -53,7 +54,7 @@ enum INSTRUCTION
 
 typedef union
 {
-	uint8_t			packet[MAX_PARAMETERS + 6];
+	uint8_t			packet[MAX_PACKET_LENGTH];
 	
 	struct
 	{
@@ -159,11 +160,11 @@ void transmitUSBData(void)
 				// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
 				if (txPosition[BUS_6_USB] == (txCircBuffer[BUS_6_USB][txTail[BUS_6_USB]].INSTRUCTION_PACKET.nLength + 2))
 				{
-					txPosition[BUS_6_USB] = MAX_PARAMETERS + 5;
+					txPosition[BUS_6_USB] = MAX_PACKET_LENGTH - 1;
 				}
 
 				// We just wrote the checksum byte, so we are done.
-				else if (txPosition[BUS_6_USB] == (MAX_PARAMETERS + 5))
+				else if (txPosition[BUS_6_USB] == (MAX_PACKET_LENGTH - 1))
 				{
 					if (++txTail[BUS_6_USB] == NUM_BUSES)
 					{
@@ -215,12 +216,12 @@ void receiveUSBData(void)
 			// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
 			else if ((rxPosition[BUS_6_USB] > 3) && (rxPosition[BUS_6_USB] == (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].INSTRUCTION_PACKET.nLength + 2)))
 			{
-				rxPosition[BUS_6_USB] = MAX_PARAMETERS + 5;
+				rxPosition[BUS_6_USB] = MAX_PACKET_LENGTH - 1;
 			}
 
 			// We just read in the checksum byte, so we are done.
 			// The checksum byte can be verified later.
-			else if (rxPosition[BUS_6_USB] == (MAX_PARAMETERS + 5))
+			else if (rxPosition[BUS_6_USB] == (MAX_PACKET_LENGTH - 1))
 			{										
 				if (++rxHead[BUS_6_USB] == NUM_BUSES)
 				{
@@ -254,28 +255,28 @@ void processPacket(void)
 			// For packets received via USB, verify checksum and instruction.
 			if (bus == BUS_6_USB)
 			{
-				error = isValidInstruction(rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nInstruction);
-				error |= (calculateChecksum(rxCircBuffer[bus][rxTail[bus]]) != rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nChecksum) ? CHECKSUM_ERROR : NO_ERROR;
+				error = isValidInstruction(rxCircBuffer[BUS_6_USB][rxTail[BUS_6_USB]].INSTRUCTION_PACKET.nInstruction);
+				error |= (calculateChecksum(rxCircBuffer[BUS_6_USB][rxTail[BUS_6_USB]]) != rxCircBuffer[BUS_6_USB][rxTail[BUS_6_USB]].INSTRUCTION_PACKET.nChecksum) ? CHECKSUM_ERROR : NO_ERROR;
 			
 				if (error != NO_ERROR)
 				{
 					// Generate an error response.
-					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nPreamble		= 0xFFFF;
-					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nID			= RAM[DYNAMIXEL_ID];
-					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nLength		= 0x02;
-					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nInstruction	= error;
-					txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nChecksum		= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nPreamble		= 0xFFFF;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nID			= RAM[DYNAMIXEL_ID];
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nLength		= 0x02;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nInstruction	= error;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nChecksum		= calculateChecksum(txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]]);
 				
 					// Increment the head pointer for the current transmit circular buffer.
-					if (++txHead[bus] == NUM_BUSES)
+					if (++txHead[BUS_6_USB] == NUM_BUSES)
 					{
-						txHead[bus] = 0;
+						txHead[BUS_6_USB] = 0;
 					}
 				
 					// Increment the tail pointer for the current receive circular buffer.
-					if (++rxTail[bus] == NUM_BUSES)
+					if (++rxTail[BUS_6_USB] == NUM_BUSES)
 					{
-						rxTail[bus] = 0;
+						rxTail[BUS_6_USB] = 0;
 					}
 				
 					error = NO_ERROR;
@@ -515,8 +516,6 @@ void processPacket(void)
 
 void motorBusIntteruptController(uint8_t motorBus)
 {	
-//	udi_cdc_putc(0x00);
-	
 	// Check for any errors.
 	if (BUS[motorBus]->csr & (AVR32_USART_CSR_OVRE_MASK | AVR32_USART_CSR_FRAME_MASK | AVR32_USART_CSR_PARE_MASK))
 	{
@@ -551,12 +550,12 @@ void motorBusIntteruptController(uint8_t motorBus)
 		// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
 		else if ((rxPosition[motorBus] > 3) && (rxPosition[motorBus] == (rxCircBuffer[motorBus][rxHead[motorBus]].INSTRUCTION_PACKET.nLength + 2)))
 		{
-			rxPosition[motorBus] = MAX_PARAMETERS + 5;
+			rxPosition[motorBus] = MAX_PACKET_LENGTH - 1;
 		}
 
 		// We just read in the checksum byte, so we are done.
 		// The checksum byte can be verified later.
-		else if (rxPosition[motorBus] == (MAX_PARAMETERS + 5))
+		else if (rxPosition[motorBus] == (MAX_PACKET_LENGTH - 1))
 		{
 			if (++rxHead[motorBus] == NUM_BUSES)
 			{
@@ -592,11 +591,11 @@ void motorBusIntteruptController(uint8_t motorBus)
 				// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
 				if (txPosition[motorBus] == (txCircBuffer[motorBus][txTail[motorBus]].INSTRUCTION_PACKET.nLength + 2))
 				{
-					txPosition[motorBus] = MAX_PARAMETERS + 5;
+					txPosition[motorBus] = MAX_PACKET_LENGTH - 1;
 				}
 
 				// We just wrote the checksum byte, so we are done.
-				else if (txPosition[motorBus] == (MAX_PARAMETERS + 5))
+				else if (txPosition[motorBus] == (MAX_PACKET_LENGTH - 1))
 				{
 					if (++txTail[motorBus] == NUM_BUSES)
 					{
