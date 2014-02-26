@@ -1,5 +1,6 @@
 *~
 *.atsuo
+*.o
 
 *.elf
 *.hex

@@ -92,7 +92,6 @@ static volatile avr32_usart_t	*BUS[NUM_BUSES] = {0};																									// 
 
 
 
-
 void initRAM(void)
 {
 	uint8_t temp[RAM_TABLE_SIZE] = {MODEL_NUMBER_L_DEFAULT, MODEL_NUMBER_H_DEFAULT, FIRMWARE_VERSION_DEFAULT, DYNAMIXEL_ID_DEFAULT, BAUD_RATE_DEFAULT};
@@ -149,12 +148,7 @@ void transmitUSBData(void)
 		if (txTail[BUS_6_USB] != txHead[BUS_6_USB])
 		{
 			// Write byte to the Transmitter Holding Register.
-			if (udi_cdc_putc(txCircBuffer[BUS_6_USB][txTail[BUS_6_USB]].packet[txPosition[BUS_6_USB]]) == FALSE)
-			{
-				udi_cdc_signal_overrun();
-			}
-			
-			else
+			if (udi_cdc_write_buf(&txCircBuffer[BUS_6_USB][txTail[BUS_6_USB]].packet[txPosition[BUS_6_USB]], 1) == 0)
 			{
 				// Check to see if we just wrote the last parameter.
 
@@ -186,21 +180,18 @@ void transmitUSBData(void)
 			}
 		}
 	}
+	
+	else
+	{
+		udi_cdc_signal_overrun();
+	}
 }
 
 void receiveUSBData(void)
 {
-//	if (udi_cdc_is_rx_ready() == TRUE)
-//	{
-//		udi_cdc_putc(udi_cdc_multi_get_nb_received_data(0));
-			
-		if (udi_cdc_read_buf(&rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[rxPosition[BUS_6_USB]], 1) != 0)
-		{
-			// Failed to read a character from the USB.
-			udi_cdc_signal_framing_error();
-		}
-
-		else
+	if (udi_cdc_is_rx_ready() == TRUE)
+	{
+		if (udi_cdc_read_buf(&rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[rxPosition[BUS_6_USB]], 1) == 0)
 		{
 			// We read a character, now sanity check it.
 		
@@ -245,7 +236,7 @@ void receiveUSBData(void)
 				rxPosition[BUS_6_USB]++;
 			}
 		}
-//	}
+	}
 }
 
 void processPacket(void)
@@ -524,6 +515,8 @@ void processPacket(void)
 
 void motorBusIntteruptController(uint8_t motorBus)
 {	
+//	udi_cdc_putc(0x00);
+	
 	// Check for any errors.
 	if (BUS[motorBus]->csr & (AVR32_USART_CSR_OVRE_MASK | AVR32_USART_CSR_FRAME_MASK | AVR32_USART_CSR_PARE_MASK))
 	{
@@ -648,7 +641,7 @@ void usb_rx_notify(uint8_t port)
 			BUS[bus]->ier = AVR32_USART_IER_TXRDY_MASK;
 		}
 	}
-		
+	
 	/*
 	 * All received messages should be of the following form:
 	 * 2 Byte preamble.     Should always be 0xFFFF.
