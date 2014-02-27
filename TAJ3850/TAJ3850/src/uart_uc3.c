@@ -22,8 +22,16 @@
 #define BUS_6_USB					0x03
 #define NUM_BUSES					BUS_6_USB + 1																										// Number of motor buses plus the USB bus.
 
-#define MAX_PACKET_LENGTH			0x85
+#define MAX_PACKET_LENGTH			0x84
 #define MAX_PARAMETERS				MAX_PACKET_LENGTH - 6
+#define PACKET_PREAMBLE_1_OFFSET	0x00
+#define PACKET_PREAMBLE_2_OFFSET	0x01
+#define PACKET_ID_OFFSET			0x02
+#define PACKET_LENGTH_OFFSET		0x03
+#define PACKET_INSTRUCTION_OFFSET	0x04
+#define PACKET_PARAMETERS_OFFSET	0x05
+#define PACKET_CHECKSUM_OFFSET		MAX_PACKET_LENGTH - 1
+
 
 /********************************************
  *			TYPES AND ENUMS					*
@@ -52,26 +60,11 @@ enum INSTRUCTION
 	BULK_READ			= 0x92
 };
 
-typedef union
-{
-	uint8_t			packet[MAX_PACKET_LENGTH];
-	
-	struct
-	{
-		uint16_t	nPreamble;
-		uint8_t		nID;																																// ID of the device to send the message to.
-		uint8_t		nLength;																															// Length of the message after this point.
-		uint8_t		nInstruction;																														// Instruction to perform. Or returned error if this is a response.
-		uint8_t		nParameters[MAX_PARAMETERS];																										// The parameters for the message. May be none. Upper limit of MAX_PARAMETERS.
-		uint8_t		nChecksum;																															// Check Sum = ~(0xFF & (ID + Length + Error + Parameter1 + ... + Parameter N))
-	} INSTRUCTION_PACKET;
-} PACKET;
-
 /********************************************
  *			FUNCTION PROTOTYPES				*
  ********************************************/
 void	initRAM(void);
-uint8_t	calculateChecksum(const PACKET packet);
+uint8_t	calculateChecksum(const volatile uint8_t *packet);
 uint8_t isValidInstruction(uint8_t instruction);
 
 /********************************************
@@ -81,8 +74,8 @@ __attribute__((__section__(".userpage"))) uint8_t RAM[RAM_TABLE_SIZE];										
 
 static volatile usart_options_t	usart_options;
 
-static volatile PACKET			txCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)].packet = {0}};		// Transmit circular buffers.
-static volatile PACKET			rxCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)].packet = {0}};		// Receive circular buffers.
+static volatile uint8_t			txCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS][MAX_PACKET_LENGTH] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)] = {0}};		// Transmit circular buffers.
+static volatile uint8_t			rxCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS][MAX_PACKET_LENGTH] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)] = {0}};		// Receive circular buffers.
 static volatile uint8_t			txHead[NUM_BUSES] = {0};																								// Pointer to the head of each transmit circular buffer.
 static volatile uint8_t			txTail[NUM_BUSES] = {0};																								// Pointer to the tail of each transmit circular buffer.
 static volatile uint8_t			txPosition[NUM_BUSES] = {0};																							// Pointer to the position within the head of each transmit circular buffer.
@@ -104,7 +97,7 @@ void initRAM(void)
 	BUS[BUS_1_MOTORS] = ((avr32_usart_t*)AVR32_USART0_ADDRESS);
 	BUS[BUS_2_MOTORS] = ((avr32_usart_t*)AVR32_USART1_ADDRESS);
 	BUS[BUS_3_MOTORS] = ((avr32_usart_t*)AVR32_USART2_ADDRESS);
-	BUS[BUS_6_USB] = NULL:
+	BUS[BUS_6_USB] = NULL;
 }
 
 uint8_t isValidInstruction(uint8_t instruction)
@@ -130,27 +123,32 @@ uint8_t isValidInstruction(uint8_t instruction)
 	}
 }
 
-uint8_t calculateChecksum(const PACKET packet)
+uint8_t calculateChecksum(const volatile uint8_t *packet)
 {
-	uint32_t checksum = packet.INSTRUCTION_PACKET.nID + packet.INSTRUCTION_PACKET.nLength + packet.INSTRUCTION_PACKET.nInstruction;
-	uint8_t i;
+	uint16_t checksum = packet[PACKET_ID_OFFSET] + packet[PACKET_LENGTH_OFFSET] + packet[PACKET_INSTRUCTION_OFFSET];
+	uint8_t parameter;
 	
-	for (i = 0; i < (packet.INSTRUCTION_PACKET.nLength - 2); i++)
+	for (parameter = 0; parameter < (packet[PACKET_LENGTH_OFFSET] - 2); parameter++)
 	{
-		checksum += packet.INSTRUCTION_PACKET.nParameters[i];
+		checksum += packet[PACKET_PARAMETERS_OFFSET + parameter];
 	}
 	
-	return((uint8_t)(~(checksum & 0x000000FF)));
+	return((uint8_t)(~(checksum & 0x00FF)));
 }
 
 void transmitUSBData(void)
 {
+	irqflags_t flags;
+	
 	if (udi_cdc_is_tx_ready() == TRUE)
 	{
+		flags = cpu_irq_save();
+		
 		if (txTail[BUS_6_USB] != txHead[BUS_6_USB])
 		{
 			// Write byte to the Transmitter Holding Register.
-			if (udi_cdc_write_buf(&txCircBuffer[BUS_6_USB][txTail[BUS_6_USB]].packet[txPosition[BUS_6_USB]], 1) == 0)
+			// Need to cast away volatile qualifier.
+			if (udi_cdc_write_buf((void *)&txCircBuffer[BUS_6_USB][txTail[BUS_6_USB]][txPosition[BUS_6_USB]], 1) == 0)
 			{
 				// Check to see if we just wrote the last parameter.
 
@@ -159,17 +157,17 @@ void transmitUSBData(void)
 				// The length field contains the number of parameters + 2. So, the number of bytes to reach the last parameter is
 				// 5 - 1 + (length - 2) = length + 2.
 				// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
-				if (txPosition[BUS_6_USB] == (txCircBuffer[BUS_6_USB][txTail[BUS_6_USB]].INSTRUCTION_PACKET.nLength + 2))
+				if (txPosition[BUS_6_USB] == (txCircBuffer[BUS_6_USB][txTail[BUS_6_USB]][PACKET_LENGTH_OFFSET] + 2))
 				{
-					txPosition[BUS_6_USB] = MAX_PACKET_LENGTH - 1;
+					txPosition[BUS_6_USB] = PACKET_CHECKSUM_OFFSET;
 				}
 
 				// We just wrote the checksum byte, so we are done.
-				else if (txPosition[BUS_6_USB] == (MAX_PACKET_LENGTH - 1))
+				else if (txPosition[BUS_6_USB] == PACKET_CHECKSUM_OFFSET)
 				{
 					txTail[BUS_6_USB]++;
 					
-					if (txTail[BUS_6_USB] == NUM_BUSES)
+					if (txTail[BUS_6_USB] >= NUM_BUSES)
 					{
 						txTail[BUS_6_USB] = 0;
 					}
@@ -183,6 +181,8 @@ void transmitUSBData(void)
 				}
 			}
 		}
+		
+		cpu_irq_restore(flags);
 	}
 	
 	else
@@ -193,42 +193,106 @@ void transmitUSBData(void)
 
 void receiveUSBData(void)
 {
-	if (udi_cdc_is_rx_ready() == TRUE)
+	irqflags_t flags;
+	uint8_t count, slot, startPosition, size;
+	
+	if (udi_cdc_is_rx_ready())
 	{
-		if (udi_cdc_read_buf(&rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[rxPosition[BUS_6_USB]], 1) == 0)
+		count = 0;
+		
+		flags = cpu_irq_save();
+
+		count = (udi_cdc_get_nb_received_data() < MAX_PACKET_LENGTH) ? udi_cdc_get_nb_received_data() : MAX_PACKET_LENGTH;
+		
+		// Need to cast away volatile qualifier.
+		if (udi_cdc_read_buf((uint8_t *)&rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_INSTRUCTION_OFFSET], count) == 0)
+		{
+			rxPosition[BUS_6_USB] += count;
+			
+			if (rxPosition[BUS_6_USB] >= PACKET_LENGTH_OFFSET)
+			{
+				do 
+				{
+					slot = (rxHead[BUS_6_USB] + 1 == NUM_BUSES) ? 0 : rxHead[BUS_6_USB] + 1;
+					startPosition = rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_LENGTH_OFFSET] + 4;
+					size = rxPosition[BUS_6_USB] - rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_LENGTH_OFFSET] - 4;
+						
+					if (rxPosition[BUS_6_USB] > (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_LENGTH_OFFSET] + 4))
+					{
+						// Copy excess data to the next slot in the circular buffer.
+						memcpy((uint8_t *)&rxCircBuffer[BUS_6_USB][slot][0], (uint8_t *)&rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][startPosition], size * sizeof(uint8_t));
+						
+						rxPosition[BUS_6_USB] = size;
+						
+						// Find the checksum byte and move it to its correct position.
+						rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_CHECKSUM_OFFSET] = rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][startPosition - 1];
+						
+						rxHead[BUS_6_USB]++;
+
+						if (rxHead[BUS_6_USB] >= NUM_BUSES)
+						{
+							rxHead[BUS_6_USB] = 0;
+						}
+					}
+					
+					else if (rxPosition[BUS_6_USB] == (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_LENGTH_OFFSET] + 4))
+					{							
+						// Find the checksum byte and move it to its correct position.
+						rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_CHECKSUM_OFFSET] = rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][startPosition - 1];
+						
+						rxHead[BUS_6_USB]++;
+
+						if (rxHead[BUS_6_USB] >= NUM_BUSES)
+						{
+							rxHead[BUS_6_USB] = 0;
+						}
+					}
+				} while(rxPosition[BUS_6_USB] > (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_LENGTH_OFFSET] + 4));
+			}
+		}
+
+/*		
+		// Need to cast away volatile qualifier.
+		if (udi_cdc_read_buf((uint8_t *)&rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][rxPosition[BUS_6_USB]], 1) == 0)
 		{
 			// We read a character, now sanity check it.
 		
 			// Verify each byte of the preamble.
-			if ((rxPosition[BUS_6_USB] == 0) && (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[0] != 0xFF))
+			if ((rxPosition[BUS_6_USB] == 0) && (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_PREAMBLE_1_OFFSET] != 0xFF))
 			{
 				// Preamble is wrong. Ignore this character and start again.
 				rxPosition[BUS_6_USB] = 0;
 			}
 		
-			else if ((rxPosition[BUS_6_USB] == 1) && (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].packet[1] != 0xFF))
+			else if ((rxPosition[BUS_6_USB] == 1) && (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_PREAMBLE_2_OFFSET] != 0xFF))
 			{
 				// Preamble is wrong. Ignore this character and start again.
 				rxPosition[BUS_6_USB] = 0;
 			}
-		
+			
+			else if ((rxPosition[BUS_6_USB] == 2) && (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_ID_OFFSET] == 0xFF))
+			{
+				// We got another 0xFF, assume it is part of a preamble and wait for an ID byte to arrive.
+				;
+			}
+			
 			// When we read in the last parameter we need to jump to the checksum position.
 			// There is a total of 5 bytes before the parameters, less 1 since we start counting from 0. Less another 1 since we need to 
 			// The length field contains the number of parameters + 2. So, the number of bytes to reach the last parameter is
 			// 5 - 1 + (length - 2) = length + 2.
 			// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
-			else if ((rxPosition[BUS_6_USB] > 3) && (rxPosition[BUS_6_USB] == (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]].INSTRUCTION_PACKET.nLength + 2)))
+			else if ((rxPosition[BUS_6_USB] > PACKET_LENGTH_OFFSET) && (rxPosition[BUS_6_USB] == (rxCircBuffer[BUS_6_USB][rxHead[BUS_6_USB]][PACKET_LENGTH_OFFSET] + 2)))
 			{
-				rxPosition[BUS_6_USB] = MAX_PACKET_LENGTH - 1;
+				rxPosition[BUS_6_USB] = PACKET_CHECKSUM_OFFSET;
 			}
 
 			// We just read in the checksum byte, so we are done.
 			// The checksum byte can be verified later.
-			else if (rxPosition[BUS_6_USB] == (MAX_PACKET_LENGTH - 1))
+			else if (rxPosition[BUS_6_USB] == PACKET_CHECKSUM_OFFSET)
 			{										
 				rxHead[BUS_6_USB]++;
 
-				if (rxHead[BUS_6_USB] == NUM_BUSES)
+				if (rxHead[BUS_6_USB] >= NUM_BUSES)
 				{
 					rxHead[BUS_6_USB] = 0;
 				}
@@ -242,6 +306,9 @@ void receiveUSBData(void)
 				rxPosition[BUS_6_USB]++;
 			}
 		}
+*/
+
+		cpu_irq_restore(flags);
 	}
 }
 
@@ -249,33 +316,47 @@ void processPacket(void)
 {
 	uint8_t bus, txBus;
 	uint8_t error;
+	uint8_t packet[MAX_PACKET_LENGTH];
+	irqflags_t flags;
 	
 	// Check each bus for anything to process.
 	for (bus = BUS_1_MOTORS; bus <= BUS_6_USB; bus++)
 	{
+		flags = cpu_irq_save();
+		
 		// We need only check the receive buffers to see if there is anything to process.
 		// The transmit buffers are filled as a result of our processing.
 		while (rxTail[bus] != rxHead[bus])
 		{
+			memcpy(&packet, &rxCircBuffer[bus][rxTail[bus]], MAX_PACKET_LENGTH);
+
+			udi_cdc_putc(packet[PACKET_PREAMBLE_1_OFFSET]);
+			udi_cdc_putc(packet[PACKET_PREAMBLE_2_OFFSET]);
+			udi_cdc_putc(packet[PACKET_ID_OFFSET]);
+			udi_cdc_putc(packet[PACKET_LENGTH_OFFSET]);
+			udi_cdc_putc(packet[PACKET_INSTRUCTION_OFFSET]);
+			udi_cdc_putc(packet[PACKET_CHECKSUM_OFFSET]);
+			
 			// For packets received via USB, verify checksum and instruction.
 			if (bus == BUS_6_USB)
 			{
-				error = isValidInstruction(rxCircBuffer[BUS_6_USB][rxTail[BUS_6_USB]].INSTRUCTION_PACKET.nInstruction);
-				error |= (calculateChecksum(rxCircBuffer[BUS_6_USB][rxTail[BUS_6_USB]]) != rxCircBuffer[BUS_6_USB][rxTail[BUS_6_USB]].INSTRUCTION_PACKET.nChecksum) ? CHECKSUM_ERROR : NO_ERROR;
+				error = isValidInstruction(packet[PACKET_INSTRUCTION_OFFSET]);
+				error |= (calculateChecksum(packet) != packet[PACKET_CHECKSUM_OFFSET]) ? CHECKSUM_ERROR : NO_ERROR;
 			
 				if (error != NO_ERROR)
 				{
 					// Generate an error response.
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nPreamble		= 0xFFFF;
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nID			= RAM[DYNAMIXEL_ID];
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nLength		= 0x02;
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nInstruction	= error;
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nChecksum		= calculateChecksum(txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]]);
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]][PACKET_PREAMBLE_1_OFFSET]		= 0xFF;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]][PACKET_PREAMBLE_2_OFFSET]		= 0xFF;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]][PACKET_ID_OFFSET]				= RAM[DYNAMIXEL_ID];
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]][PACKET_LENGTH_OFFSET]			= 0x02;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]][PACKET_INSTRUCTION_OFFSET]		= error;
+					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]]);
 				
 					// Increment the head pointer for the current transmit circular buffer.
 					txHead[BUS_6_USB]++;
 
-					if (txHead[BUS_6_USB] == NUM_BUSES)
+					if (txHead[BUS_6_USB] >= NUM_BUSES)
 					{
 						txHead[BUS_6_USB] = 0;
 					}
@@ -283,7 +364,7 @@ void processPacket(void)
 					// Increment the tail pointer for the current receive circular buffer.
 					rxTail[BUS_6_USB]++;
 
-					if (rxTail[BUS_6_USB] == NUM_BUSES)
+					if (rxTail[BUS_6_USB] >= NUM_BUSES)
 					{
 						rxTail[BUS_6_USB] = 0;
 					}
@@ -294,10 +375,10 @@ void processPacket(void)
 			}
 
 			// Check the ID field and see if this message was meant for us.
-			if ((rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID == RAM[DYNAMIXEL_ID]) || (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID == DYNAMIXEL_ID_BROADCAST))
+			if ((packet[PACKET_ID_OFFSET] == RAM[DYNAMIXEL_ID]) || (packet[PACKET_ID_OFFSET] == DYNAMIXEL_ID_BROADCAST))
 			{
 				// Packet is meant for us.
-				switch (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nInstruction)
+				switch (packet[PACKET_INSTRUCTION_OFFSET])
 				{
 					case PING:
 					{
@@ -313,15 +394,16 @@ void processPacket(void)
 						 */
 						
 						// Generate response packet.
-						txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nPreamble		= 0xFFFF;
-						txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nID			= RAM[DYNAMIXEL_ID];
-						txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nLength		= 0x02;
-						txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nInstruction	= NO_ERROR;
-						txCircBuffer[bus][txHead[bus]].INSTRUCTION_PACKET.nChecksum		= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_1_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_2_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_ID_OFFSET]				= RAM[DYNAMIXEL_ID];
+						txCircBuffer[bus][txHead[bus]][PACKET_LENGTH_OFFSET]			= 0x02;
+						txCircBuffer[bus][txHead[bus]][PACKET_INSTRUCTION_OFFSET]		= NO_ERROR;
+						txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
 						
 						txHead[bus]++;
 
-						if (txHead[bus] == NUM_BUSES)
+						if (txHead[bus] >= NUM_BUSES)
 						{
 							txHead[bus] = 0;
 						}
@@ -458,24 +540,19 @@ void processPacket(void)
 				}
 						
 				// Replicate received packet across all buses if broadcasting.
-				if (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID == DYNAMIXEL_ID_BROADCAST)
+				if (packet[PACKET_ID_OFFSET] == DYNAMIXEL_ID_BROADCAST)
 				{
 					for (txBus = 0; txBus < NUM_BUSES; txBus++)
 					{
 						// We don't want to broadcast back on to the bus that the message was received on.
 						if (txBus != bus)
 						{
-							txCircBuffer[txBus][txHead[txBus]].INSTRUCTION_PACKET.nPreamble		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nPreamble;
-							txCircBuffer[txBus][txHead[txBus]].INSTRUCTION_PACKET.nID			= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID;
-							txCircBuffer[txBus][txHead[txBus]].INSTRUCTION_PACKET.nLength		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nLength;
-							txCircBuffer[txBus][txHead[txBus]].INSTRUCTION_PACKET.nInstruction	= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nInstruction;
-							memcpy(&txCircBuffer[txBus][txHead[txBus]].INSTRUCTION_PACKET.nParameters, &rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nParameters, (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nLength - 2) * sizeof(uint8_t));
-							txCircBuffer[txBus][txHead[txBus]].INSTRUCTION_PACKET.nChecksum		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nChecksum;
+							memcpy(&txCircBuffer[txBus][txHead[txBus]], &packet, MAX_PACKET_LENGTH);
 						
 							// Increment the head pointer for the current transmit circular buffer.
-							txHead[bus]++;
+							txHead[txBus]++;
 
-							if (txHead[txBus] == NUM_BUSES)
+							if (txHead[txBus] >= NUM_BUSES)
 							{
 								txHead[txBus] = 0;
 							}
@@ -496,17 +573,12 @@ void processPacket(void)
 				else
 				{
 					// Packet came from a USART and it was not addressed to us, so route it to the USB.
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nPreamble		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nPreamble;
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nID			= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nID;
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nLength		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nLength;
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nInstruction	= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nInstruction;
-					memcpy(&txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nParameters, &rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nParameters, (rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nLength - 2) * sizeof(uint8_t));
-					txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]].INSTRUCTION_PACKET.nChecksum		= rxCircBuffer[bus][rxTail[bus]].INSTRUCTION_PACKET.nChecksum;
+					memcpy(&txCircBuffer[BUS_6_USB][txHead[BUS_6_USB]], &packet, MAX_PACKET_LENGTH);
 							
 					// Increment the head pointer for the current transmit circular buffer.
 					txHead[BUS_6_USB]++;
 
-					if (txHead[BUS_6_USB] == NUM_BUSES)
+					if (txHead[BUS_6_USB] >= NUM_BUSES)
 					{
 						txHead[BUS_6_USB] = 0;
 					}
@@ -516,6 +588,8 @@ void processPacket(void)
 			// Increment the tail pointer for the current receive circular buffer.
 			rxTail[bus]++;
 		}
+							
+		cpu_irq_restore(flags);
 	}
 
 	for (bus = 0; bus < (NUM_BUSES - 1); bus++)
@@ -536,7 +610,7 @@ void motorBusIntteruptController(uint8_t motorBus)
 	{
 		return;
 	}
-
+	
 	// Check for any errors.
 	if (BUS[motorBus]->csr & (AVR32_USART_CSR_OVRE_MASK | AVR32_USART_CSR_FRAME_MASK | AVR32_USART_CSR_PARE_MASK))
 	{
@@ -547,36 +621,42 @@ void motorBusIntteruptController(uint8_t motorBus)
     // There is a message being received from one of the buses.
 	if (BUS[motorBus]->csr & AVR32_USART_CSR_RXRDY_MASK)
 	{
-		rxCircBuffer[motorBus][rxHead[motorBus]].packet[rxPosition[motorBus]] = BUS[motorBus]->rhr & 0xFF;
+		rxCircBuffer[motorBus][rxHead[motorBus]][rxPosition[motorBus]] = BUS[motorBus]->rhr & 0xFF;
 		
 		// We read a character, now sanity check it.
 	    
 		// Verify each byte of the preamble.
-		if ((rxPosition[motorBus] == 0) && (rxCircBuffer[motorBus][rxHead[motorBus]].packet[0] != 0xFF))
+		if ((rxPosition[motorBus] == 0) && (rxCircBuffer[motorBus][rxHead[motorBus]][PACKET_PREAMBLE_1_OFFSET] != 0xFF))
 		{
 			// Preamble is wrong. Ignore this character and start again.
 			rxPosition[motorBus] = 0;
 		}
 	    
-		else if ((rxPosition[motorBus] == 1) && (rxCircBuffer[motorBus][rxHead[motorBus]].packet[1] != 0xFF))
+		else if ((rxPosition[motorBus] == 1) && (rxCircBuffer[motorBus][rxHead[motorBus]][PACKET_PREAMBLE_2_OFFSET] != 0xFF))
 		{
 			// Preamble is wrong. Ignore this character and start again.
 			rxPosition[motorBus] = 0;
 		}
-	    
+		
+		else if ((rxPosition[motorBus] == 2) && (rxCircBuffer[motorBus][rxHead[motorBus]][PACKET_ID_OFFSET] == 0xFF))
+		{
+			// We got another 0xFF, assume it is part of a preamble and wait for an ID byte to arrive.
+			;
+		}
+		
 		// When we read in the last parameter we need to jump to the checksum position.
 		// There is a total of 5 bytes before the parameters, less 1 since we start counting from 0.
 		// The length field contains the number of parameters + 2. So, the number of bytes to reach the last parameter is
 		// 5 - 1 + (length - 2) = length + 2.
 		// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
-		else if ((rxPosition[motorBus] > 3) && (rxPosition[motorBus] == (rxCircBuffer[motorBus][rxHead[motorBus]].INSTRUCTION_PACKET.nLength + 2)))
+		else if ((rxPosition[motorBus] > PACKET_LENGTH_OFFSET) && (rxPosition[motorBus] == (rxCircBuffer[motorBus][rxHead[motorBus]][PACKET_LENGTH_OFFSET] + 2)))
 		{
-			rxPosition[motorBus] = MAX_PACKET_LENGTH - 1;
+			rxPosition[motorBus] = PACKET_CHECKSUM_OFFSET;
 		}
 
 		// We just read in the checksum byte, so we are done.
 		// The checksum byte can be verified later.
-		else if (rxPosition[motorBus] == (MAX_PACKET_LENGTH - 1))
+		else if (rxPosition[motorBus] == PACKET_CHECKSUM_OFFSET)
 		{
 			rxHead[motorBus]++;
 
@@ -603,7 +683,7 @@ void motorBusIntteruptController(uint8_t motorBus)
 			if (usart_tx_ready(BUS[motorBus]))
 			{
 				// Write byte to the Transmitter Holding Register.
-			    BUS[motorBus]->THR.txchr = txCircBuffer[motorBus][txTail[motorBus]].packet[txPosition[motorBus]] & 0xFF;
+			    BUS[motorBus]->THR.txchr = txCircBuffer[motorBus][txTail[motorBus]][txPosition[motorBus]] & 0xFF;
 				
 				// Check to see if we just wrote the last parameter.
 
@@ -612,13 +692,13 @@ void motorBusIntteruptController(uint8_t motorBus)
 				// The length field contains the number of parameters + 2. So, the number of bytes to reach the last parameter is
 				// 5 - 1 + (length - 2) = length + 2.
 				// The checksum is the last byte in the structure. With a structure length of MAX_PARATERS + 6, this equates to MAX_PARAMETS + 5.
-				if (txPosition[motorBus] == (txCircBuffer[motorBus][txTail[motorBus]].INSTRUCTION_PACKET.nLength + 2))
+				if (txPosition[motorBus] == (txCircBuffer[motorBus][txTail[motorBus]][PACKET_LENGTH_OFFSET] + 2))
 				{
-					txPosition[motorBus] = MAX_PACKET_LENGTH - 1;
+					txPosition[motorBus] = PACKET_CHECKSUM_OFFSET;
 				}
 
 				// We just wrote the checksum byte, so we are done.
-				else if (txPosition[motorBus] == (MAX_PACKET_LENGTH - 1))
+				else if (txPosition[motorBus] == PACKET_CHECKSUM_OFFSET)
 				{
 					txTail[motorBus]++;
 
