@@ -27,9 +27,6 @@ int main(void)
 
 	while (true)
 	{
-		// Check to see if there is data in the USB RX FIFO to read in.
-		receiveUSBData();
-		
 		// Check  to see if we need to process any packets.
 		processPacket();
 		
