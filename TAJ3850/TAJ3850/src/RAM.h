@@ -84,7 +84,9 @@
 
 // We only need to store model number, firmware version, dynamixel id, and baud rate in flash memory.
 // All other fields are there to provide a transparent interface for the ODROID.
-#define RAM_TABLE_SIZE				5
+//#define RAM_TABLE_LAST_ADDRESS		0x5F
+
+#define RAM_TABLE_SIZE				0x60
 #define MODEL_NUMBER_L				0x00
 #define MODEL_NUMBER_H				0x01
 #define FIRMWARE_VERSION			0x02
@@ -163,5 +165,7 @@
 #define BAUD_RATE_DEFAULT			0x06
 
 #define DYNAMIXEL_ID_BROADCAST		0xFE
+
+extern uint8_t RAM[RAM_TABLE_SIZE];
 
 #endif /* RAM_H_ */

@@ -46,4 +46,7 @@
 // Enable UART Port
 #define CONF_BOARD_COM_PORT
 
+// Enable TWI/I2C.
+#define CONF_BOARD_TWI
+
 #endif /* CONF_BOARD_H_INCLUDED */

@@ -4,6 +4,7 @@
 #include "main.h"
 #include "ui.h"
 #include "RAM.h"
+#include "mpu60X0.h"
 
 /********************************************
  *				CONSTANTS					*
@@ -22,7 +23,7 @@
 #define BUS_6_USB					0x03
 #define NUM_BUSES					BUS_6_USB + 1																										// Number of motor buses plus the USB bus.
 
-#define MAX_PACKET_LENGTH			0xD5 //0x84
+#define MAX_PACKET_LENGTH			0xD0
 #define MAX_PARAMETERS				MAX_PACKET_LENGTH - 6
 #define PACKET_PREAMBLE_1_OFFSET	0x00
 #define PACKET_PREAMBLE_2_OFFSET	0x01
@@ -33,8 +34,6 @@
 #define PACKET_PARAMETERS_OFFSET	0x05
 #define PACKET_CHECKSUM_OFFSET		MAX_PACKET_LENGTH - 1
 
-
-#define NUM_SENSOR_READINGS_TO_AVG	0xFF
 
 /********************************************
  *			TYPES AND ENUMS					*
@@ -77,13 +76,6 @@ static volatile usart_options_t	usart_options;
 
 static volatile uint8_t			PIDMap[0xFF] = {0xFF};																									// A mapping between PIDs and USART buses.
 
-static volatile uint8_t			gyroHead[NUM_SENSOR_READINGS_TO_AVG << 1] = {0};																		// Gyroscope readings from the head (hi and lo bytes, 16 readings).
-static volatile uint8_t			gyroBody[NUM_SENSOR_READINGS_TO_AVG << 1] = {0};																		// Gyroscope readings from the body (hi and lo bytes, 16 readings).
-static volatile uint8_t			accelHead[NUM_SENSOR_READINGS_TO_AVG << 1] = {0};																		// Accelerometer readings from the head (hi and lo bytes, 16 readings).
-static volatile uint8_t			accelBody[NUM_SENSOR_READINGS_TO_AVG << 1] = {0};																		// Accelerometer readings from the body (hi and lo bytes, 16 readings).
-static volatile uint8_t			tempHead[NUM_SENSOR_READINGS_TO_AVG << 1] = {0};																		// Temperature readings from the head (hi and lo bytes, 16 readings).
-static volatile uint8_t			tempBody[NUM_SENSOR_READINGS_TO_AVG << 1] = {0};																		// Temperature readings from the body (hi and lo bytes, 16 readings).
-
 static volatile uint8_t			txCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS][MAX_PACKET_LENGTH] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)] = {0}};		// Transmit circular buffers.
 static volatile uint8_t			rxCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS][MAX_PACKET_LENGTH] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)] = {0}};		// Receive circular buffers.
 static volatile uint8_t			txHead[NUM_BUSES] = {0};																								// Pointer to the head of each transmit circular buffer.
@@ -92,9 +84,9 @@ static volatile uint8_t			rxHead[NUM_BUSES] = {0};																								// Poi
 static volatile uint8_t			rxTail[NUM_BUSES] = {0};																								// Pointer to the tail of each receive circular buffer.
 static volatile avr32_usart_t	*BUS[NUM_BUSES] = {0};																									// Handle to each USART device.
 
-const uint8_t DEFAULT_RAM[RAM_TABLE_SIZE] = {MODEL_NUMBER_L_DEFAULT, MODEL_NUMBER_H_DEFAULT, FIRMWARE_VERSION_DEFAULT, DYNAMIXEL_ID_DEFAULT, BAUD_RATE_DEFAULT};
+const uint8_t					DEFAULT_RAM[RAM_TABLE_SIZE] = {MODEL_NUMBER_L_DEFAULT, MODEL_NUMBER_H_DEFAULT, FIRMWARE_VERSION_DEFAULT, DYNAMIXEL_ID_DEFAULT, BAUD_RATE_DEFAULT};
 	
-__attribute__((__section__(".flash_nvram"))) static uint8_t RAM[RAM_TABLE_SIZE];																					// Store RAM table in flash NVRAM.
+__attribute__((__section__(".flash_nvram"))) uint8_t RAM[RAM_TABLE_SIZE];																					// Store RAM table in flash NVRAM.
 //__attribute__((__section__(".userpage"))) static uint8_t RAM[RAM_TABLE_SIZE];																					// Store RAM table in flash user page.
 
 
@@ -266,7 +258,7 @@ void processPacket(void)
 {
 	static uint8_t packet[MAX_PACKET_LENGTH] = {0};
 	uint8_t bus, txBus;
-	uint8_t error;
+	uint8_t error, i;
 	irqflags_t flags;
 	
 	// Check each bus for anything to process.
@@ -276,8 +268,6 @@ void processPacket(void)
 		// The transmit buffers are filled as a result of our processing.
 		while (rxTail[bus] != rxHead[bus])
 		{
-			udi_cdc_putc(bus);
-			
 			flags = cpu_irq_save();
 
 			// Make a local copy of the packet.
@@ -306,14 +296,11 @@ void processPacket(void)
 			// For packets received via USB, verify checksum and instruction.
 			if (bus == BUS_6_USB)
 			{
-				udi_cdc_putc(0x01);
 				error = isValidInstruction(packet[PACKET_INSTRUCTION_OFFSET]);
 				error |= (calculateChecksum(packet) != packet[PACKET_CHECKSUM_OFFSET]) ? CHECKSUM_ERROR : NO_ERROR;
 			
 				if (error != NO_ERROR)
 				{
-					udi_cdc_putc(0x02);
-					
 					flags = cpu_irq_save();
 
 					// Generate an error response.
@@ -367,8 +354,6 @@ void processPacket(void)
 						 */
 						
 						// Generate response packet.
-						udi_cdc_putc(0x03);
-
 						flags = cpu_irq_save();
 
 						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_1_OFFSET]		= 0xFF;
@@ -403,6 +388,35 @@ void processPacket(void)
 						 *				Number of bytes to read.
 						 * Checksum...:	~((sum of parameters + instruction + length + id) & 0xFF).
 						 */
+						
+						// Make sure address is within range.
+						if ((packet[PACKET_PARAMETERS_OFFSET] < RAM_TABLE_SIZE) && ((packet[PACKET_PARAMETERS_OFFSET] + packet[PACKET_PARAMETERS_OFFSET + 1]) < RAM_TABLE_SIZE))
+						{
+							// Generate response packet.
+							flags = cpu_irq_save();
+
+							txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_1_OFFSET]		= 0xFF;
+							txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_2_OFFSET]		= 0xFF;
+							txCircBuffer[bus][txHead[bus]][PACKET_ID_OFFSET]				= RAM[DYNAMIXEL_ID];
+							txCircBuffer[bus][txHead[bus]][PACKET_LENGTH_OFFSET]			= 0x02 + packet[PACKET_PARAMETERS_OFFSET + 1];
+							txCircBuffer[bus][txHead[bus]][PACKET_ERROR_OFFSET]				= NO_ERROR;
+							
+							for (i = 0; i < packet[PACKET_PARAMETERS_OFFSET + 1]; i++)
+							{
+								txCircBuffer[bus][txHead[bus]][PACKET_PARAMETERS_OFFSET + i] = RAM[packet[PACKET_PARAMETERS_OFFSET] + i];
+							}
+							
+							txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
+													
+							txHead[bus]++;
+
+							if (txHead[bus] >= NUM_BUSES)
+							{
+								txHead[bus] = 0;
+							}
+
+							cpu_irq_restore(flags);
+						}
 						
 						break;
 					}
@@ -878,11 +892,34 @@ void uart_open(uint8_t port)
 		udi_cdc_putc(0x00);
 		return;
 	}
+	/*
+	// Initialize TWI driver. (Need to cast away the volatile qualifier to shut up the compiler).
+	if (initMPU60X0() == -1)
+	{
+		// Failed to initialise TWI/I2C.
+		udi_cdc_putc(0x00);
+		return;
+	}
+	
+	if (configureMPU60X0(MPU60X0_ADDRESS_BODY, -1, -1, -1) == -1)
+	{
+		// Failed to configure TWI/I2C.
+		udi_cdc_putc(0x00);
+		return;
+	}
+	*/
 }
 
 void uart_close(uint8_t port)
 {
-	// Disable interrupts
-	// Close RS232 communication
-	USART->idr = 0xFFFFFFFF;
+	uint8_t bus;
+	
+	// Loop through all USARTs and disable their interrupts.
+	for (bus = 0; bus < (NUM_BUSES - 1); bus++)
+	{
+		BUS[bus]->idr = 0xFFFFFFFF;
+	}
+	
+	// Disable TWI/I2C interrupts.
+	(&AVR32_TWI)->idr = 0xFFFFFFFF;
 }
