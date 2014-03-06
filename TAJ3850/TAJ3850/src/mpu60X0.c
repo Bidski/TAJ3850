@@ -237,8 +237,16 @@ void storeAveragedReadings(sensorLocations sensorLocation, sensorTypes sensorTyp
 				result += (float)((gyroReadings[sensorLocation][i + sensorAxis] << 8) | gyroReadings[sensorLocation][i + sensorAxis]);
 			}
 			
-			*((float *)(RAM + GYRO_X_B0)) = result / NUM_SENSOR_READINGS_TO_AVG;
-			
+			if (sensorLocation == SENSOR_LOCATION_BODY)
+			{
+				*((float *)(RAM + GYRO_X_B0)) = result / NUM_SENSOR_READINGS_TO_AVG;
+			}
+	
+			else
+			{
+				*((float *)(RAM + GYRO_X_H0)) = result / NUM_SENSOR_READINGS_TO_AVG;
+			}
+
 			break;
 		}
 		
@@ -249,6 +257,16 @@ void storeAveragedReadings(sensorLocations sensorLocation, sensorTypes sensorTyp
 				result += (float)((accelReadings[sensorLocation][i + sensorAxis] << 8) | accelReadings[sensorLocation][i + sensorAxis]);
 			}
 			
+			if (sensorLocation == SENSOR_LOCATION_BODY)
+			{
+				*((float *)(RAM + ACCEL_X_B0)) = result / NUM_SENSOR_READINGS_TO_AVG;
+			}
+			
+			else
+			{
+				*((float *)(RAM + ACCEL_X_H0)) = result / NUM_SENSOR_READINGS_TO_AVG;
+			}
+
 			break;
 		}
 		
@@ -257,6 +275,16 @@ void storeAveragedReadings(sensorLocations sensorLocation, sensorTypes sensorTyp
 			for (i = 0; i < NUM_SENSOR_READINGS_TO_AVG; i = i + 2)
 			{
 				result += (float)((tempReadings[sensorLocation][i + sensorAxis] << 8) | tempReadings[sensorLocation][i + sensorAxis]);
+			}
+			
+			if (sensorLocation == SENSOR_LOCATION_BODY)
+			{
+				*((float *)(RAM + TEMP_B0)) = result / NUM_SENSOR_READINGS_TO_AVG;
+			}
+			
+			else
+			{
+				*((float *)(RAM + TEMP_H0)) = result / NUM_SENSOR_READINGS_TO_AVG;
 			}
 			
 			break;

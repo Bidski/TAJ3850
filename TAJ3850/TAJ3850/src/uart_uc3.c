@@ -258,7 +258,7 @@ void processPacket(void)
 {
 	static uint8_t packet[MAX_PACKET_LENGTH] = {0};
 	uint8_t bus, txBus;
-	uint8_t error, i;
+	uint8_t error;
 	irqflags_t flags;
 	
 	// Check each bus for anything to process.
@@ -400,13 +400,10 @@ void processPacket(void)
 							txCircBuffer[bus][txHead[bus]][PACKET_ID_OFFSET]				= RAM[DYNAMIXEL_ID];
 							txCircBuffer[bus][txHead[bus]][PACKET_LENGTH_OFFSET]			= 0x02 + packet[PACKET_PARAMETERS_OFFSET + 1];
 							txCircBuffer[bus][txHead[bus]][PACKET_ERROR_OFFSET]				= NO_ERROR;
-							
-							for (i = 0; i < packet[PACKET_PARAMETERS_OFFSET + 1]; i++)
-							{
-								txCircBuffer[bus][txHead[bus]][PACKET_PARAMETERS_OFFSET + i] = RAM[packet[PACKET_PARAMETERS_OFFSET] + i];
-							}
-							
 							txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
+							
+							memcpy((uint8_t *)&txCircBuffer[bus][txHead[bus]][PACKET_PARAMETERS_OFFSET], &RAM[packet[PACKET_PARAMETERS_OFFSET]], packet[PACKET_PARAMETERS_OFFSET + 1] * sizeof(uint8_t));
+							
 													
 							txHead[bus]++;
 
