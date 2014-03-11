@@ -209,6 +209,9 @@ __attribute__((__interrupt__)) void MPU60X0BodyInterrupt(void)
 	
 	// Mark interrupt as handled.
 	eic_clear_interrupt_line(&AVR32_EIC, MPU60X0_BODY_INT_LINE);
+
+	// Average the stored readings.
+	storeAveragedReadings();
 }
 
 __attribute__((__interrupt__)) void MPU60X0HeadInterrupt(void)
@@ -221,80 +224,73 @@ __attribute__((__interrupt__)) void MPU60X0HeadInterrupt(void)
 	
 	// Mark interrupt as handled.
 	eic_clear_interrupt_line(&AVR32_EIC, MPU60X0_HEAD_INT_LINE);
+
+	// Average the stored readings.
+	storeAveragedReadings();
 }
 
-void storeAveragedReadings(sensorLocations sensorLocation, sensorTypes sensorType, sensorAxes sensorAxis)
+void storeAveragedReadings(void)
 {
 	float result = 0.0;
-	uint8_t i;
-	
-	switch (sensorType)
+	sensorLocations sensorLocation;
+	sensorAxes sensorAxis;
+	uint8_t reading;
+
+	for (sensorLocation = SENSOR_LOCATION_BODY; sensorLocation != SENSOR_LOCATION_HEAD; sensorLocation++)
 	{
-		case SENSOR_TYPE_GYROSCOPE:
+		for (sensorAxis = SENSOR_AXIS_X; sensorAxis != SENSOR_AXIS_Z; sensorAxis += 2)
 		{
-			for (i = 0; i < NUM_SENSOR_READINGS_TO_AVG; i = i + 6)
+			for (reading = 0; reading < NUM_SENSOR_READINGS_TO_AVG; reading += 6)
 			{
-				result += (float)((gyroReadings[sensorLocation][i + sensorAxis] << 8) | gyroReadings[sensorLocation][i + sensorAxis]);
-			}
-			
-			if (sensorLocation == SENSOR_LOCATION_BODY)
-			{
-				*((float *)(RAM + GYRO_X_B0)) = result / NUM_SENSOR_READINGS_TO_AVG;
-			}
-	
-			else
-			{
-				*((float *)(RAM + GYRO_X_H0)) = result / NUM_SENSOR_READINGS_TO_AVG;
+				result += (float)((gyroReadings[sensorLocation][reading + sensorAxis] << 8) | gyroReadings[sensorLocation][reading + sensorAxis + 1]);
 			}
 
-			break;
-		}
-		
-		case SENSOR_TYPE_ACCELEROMETER:
-		{
-			for (i = 0; i < NUM_SENSOR_READINGS_TO_AVG; i = i + 6)
-			{
-				result += (float)((accelReadings[sensorLocation][i + sensorAxis] << 8) | accelReadings[sensorLocation][i + sensorAxis]);
-			}
+			// Average the readings and convert to SI units.
+			result = result * (GRAVITY / NUM_SENSOR_READINGS_TO_AVG);
 			
-			if (sensorLocation == SENSOR_LOCATION_BODY)
-			{
-				*((float *)(RAM + ACCEL_X_B0)) = result / NUM_SENSOR_READINGS_TO_AVG;
-			}
+			// (RAM + (GYRO_X_B0 + sensorAxis) + (sensorLocation * (GYRO_X_H0 - GYRO_X_B0))))
+			// RAM_Start_Address + (Sensor_Axis_Offset) + (Sensor_Location_Offset)
+			flashc_memcpy((RAM + (GYRO_X_B0 + sensorAxis) + (sensorLocation * (GYRO_X_H0 - GYRO_X_B0))), &result, sizeof(float), false);
 			
-			else
-			{
-				*((float *)(RAM + ACCEL_X_H0)) = result / NUM_SENSOR_READINGS_TO_AVG;
-			}
-
-			break;
-		}
-		
-		case SENSOR_TYPE_TEMPERATURE:
-		{
-			for (i = 0; i < NUM_SENSOR_READINGS_TO_AVG; i = i + 2)
-			{
-				result += (float)((tempReadings[sensorLocation][i + sensorAxis] << 8) | tempReadings[sensorLocation][i + sensorAxis]);
-			}
-			
-			if (sensorLocation == SENSOR_LOCATION_BODY)
-			{
-				*((float *)(RAM + TEMP_B0)) = result / NUM_SENSOR_READINGS_TO_AVG;
-			}
-			
-			else
-			{
-				*((float *)(RAM + TEMP_H0)) = result / NUM_SENSOR_READINGS_TO_AVG;
-			}
-			
-			break;
-		}
-		
-		default:
-		{
-			break;
+			result = 0.0;
 		}
 	}
 	
-//	return(result / NUM_SENSOR_READINGS_TO_AVG);
+	for (sensorLocation = SENSOR_LOCATION_BODY; sensorLocation != SENSOR_LOCATION_HEAD; sensorLocation++)
+	{
+		for (sensorAxis = SENSOR_AXIS_X; sensorAxis != SENSOR_AXIS_Z; sensorAxis += 2)
+		{
+			for (reading = 0; reading < NUM_SENSOR_READINGS_TO_AVG; reading += 6)
+			{
+				result += (float)((accelReadings[sensorLocation][reading + sensorAxis] << 8) | accelReadings[sensorLocation][reading + sensorAxis + 1]);
+			}
+			
+			// Average the readings and convert to SI units.
+			result = result * (RADIANS_PER_DEGREE / NUM_SENSOR_READINGS_TO_AVG);
+			
+			// (RAM + (ACCEL_X_B0 + sensorAxis) + (sensorLocation * (ACCEL_X_H0 - ACCEL_X_B0))))
+			// RAM_Start_Address + (Sensor_Axis_Offset) + (Sensor_Location_Offset)
+			flashc_memcpy((RAM + (ACCEL_X_B0 + sensorAxis) + (sensorLocation * (ACCEL_X_H0 - ACCEL_X_B0))), &result, sizeof(float), false);
+			
+			result = 0.0;
+		}
+	}
+	
+	for (sensorLocation = SENSOR_LOCATION_BODY; sensorLocation != SENSOR_LOCATION_HEAD; sensorLocation++)
+	{
+		for (reading = 0; reading < NUM_SENSOR_READINGS_TO_AVG; reading += 2)
+		{
+			// Convert readings to SI units.
+			result += (float)CONVERT_TEMP_READING(((tempReadings[sensorLocation][reading + sensorAxis] << 8) | tempReadings[sensorLocation][reading + sensorAxis + 1]));
+		}
+			
+		// Average the readings.
+		result /= NUM_SENSOR_READINGS_TO_AVG;
+			
+		// (RAM + TEMP_B0 + (sensorLocation * (TEMP_H0 - TEMP_B0))))
+		// RAM_Start_Address + Sensor_Offset + (Sensor_Location_Offset)
+		flashc_memcpy((RAM + TEMP_B0 + (sensorLocation * (TEMP_H0 - TEMP_B0))), &result, sizeof(float), false);
+			
+		result = 0.0;
+	}
 }

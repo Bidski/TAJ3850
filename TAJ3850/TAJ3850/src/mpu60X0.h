@@ -48,7 +48,8 @@ typedef enum
 #define MPU60X0_BODY_INT_IRQ		AVR32_EIC_IRQ_2
 #define MPU60X0_HEAD_INT_IRQ		AVR32_EIC_IRQ_5
 
-#define NUM_SENSORS					0x02
+#define NUM_SENSORS					0x03
+#define NUM_SENSOR_LOCATIONS		0x02
 #define NUM_SENSOR_READINGS_TO_AVG	0x10
 
 
@@ -243,14 +244,14 @@ void	MPU60X0HeadInterrupt(void);
 void	MPU60X0BodyInterrupt(void);
 void	MPU60X0IntteruptController(uint8_t mpuAddress, uint8_t sensor, uint8_t *gyroReadingOffset, uint8_t *accelReadingOffset, uint8_t *tempReadingOffset);
 
-void	storeAveragedReadings(sensorLocations sensorLocation, sensorTypes sensorType, sensorAxes sensorAxis);
+void	storeAveragedReadings(void);
 
 /********************************************
  *				GLOBALS						*
  ********************************************/
-static volatile uint8_t					 gyroReadings[NUM_SENSORS][(NUM_SENSOR_READINGS_TO_AVG * 3) << 1]	= {[0 ... (NUM_SENSORS - 1)] = {0}};		// Gyroscope readings from the head and body (hi and lo bytes).
-static volatile uint8_t					accelReadings[NUM_SENSORS][(NUM_SENSOR_READINGS_TO_AVG * 3) << 1]	= {[0 ... (NUM_SENSORS - 1)] = {0}};		// Accelerometer readings from the head and body (hi and lo bytes).
-static volatile uint8_t					 tempReadings[NUM_SENSORS][(NUM_SENSOR_READINGS_TO_AVG * 1) << 1]	= {[0 ... (NUM_SENSORS - 1)] = {0}};		// Temperature readings from the head and body (hi and lo bytes).
+static volatile uint8_t					 gyroReadings[NUM_SENSOR_LOCATIONS][(NUM_SENSOR_READINGS_TO_AVG * 3) << 1]	= {[0 ... (NUM_SENSOR_LOCATIONS - 1)] = {0}};		// Gyroscope readings from the head and body (hi and lo bytes).
+static volatile uint8_t					accelReadings[NUM_SENSOR_LOCATIONS][(NUM_SENSOR_READINGS_TO_AVG * 3) << 1]	= {[0 ... (NUM_SENSOR_LOCATIONS - 1)] = {0}};		// Accelerometer readings from the head and body (hi and lo bytes).
+static volatile uint8_t					 tempReadings[NUM_SENSOR_LOCATIONS][(NUM_SENSOR_READINGS_TO_AVG * 1) << 1]	= {[0 ... (NUM_SENSOR_LOCATIONS - 1)] = {0}};		// Temperature readings from the head and body (hi and lo bytes).
 
 
 #endif // _MPU60X0_H_
