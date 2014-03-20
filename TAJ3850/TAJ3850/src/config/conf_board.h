@@ -1,9 +1,9 @@
 /**
- * \file *********************************************************************
+ * \file
  *
  * \brief Board configuration
  *
- * Copyright (c) 2010 Atmel Corporation. All rights reserved.
+ * Copyright (c) 2012 Atmel Corporation. All rights reserved.
  *
  * \asf_license_start
  *
@@ -40,13 +40,14 @@
  * \asf_license_stop
  *
  */
+
 #ifndef CONF_BOARD_H_INCLUDED
 #define CONF_BOARD_H_INCLUDED
 
-// Enable UART Port
-#define CONF_BOARD_COM_PORT
+// UART module is used
+#define CONF_BOARD_UART_CONSOLE
 
-// Enable TWI/I2C.
-#define CONF_BOARD_TWI
+#define CONF_BOARD_ADC
+#define CONF_BOARD_TWI0
 
 #endif /* CONF_BOARD_H_INCLUDED */

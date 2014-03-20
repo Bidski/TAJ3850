@@ -3,7 +3,7 @@
  *
  * \brief USB configuration file for CDC application
  *
- * Copyright (c) 2009-2013 Atmel Corporation. All rights reserved.
+ * Copyright (c) 2009-2014 Atmel Corporation. All rights reserved.
  *
  * \asf_license_start
  *
@@ -53,12 +53,17 @@
  */
 
 //! Device definition (mandatory)
-#define  USB_DEVICE_VENDOR_ID				USB_VID_ATMEL
-#define  USB_DEVICE_PRODUCT_ID				USB_PID_ATMEL_ASF_CDC
-#define  USB_DEVICE_MAJOR_VERSION			1
-#define  USB_DEVICE_MINOR_VERSION			0
-#define  USB_DEVICE_POWER					100 // Consumption on Vbus line (mA)
-#define  USB_DEVICE_ATTR					(USB_CONFIG_ATTR_SELF_POWERED)
+#define  USB_DEVICE_VENDOR_ID             USB_VID_ATMEL
+#if BOARD == UC3B_BOARD_CONTROLLER
+# define  USB_DEVICE_PRODUCT_ID            USB_PID_ATMEL_UC3_CDC_DEBUG
+#else
+# define  USB_DEVICE_PRODUCT_ID            USB_PID_ATMEL_ASF_CDC
+#endif
+#define  USB_DEVICE_MAJOR_VERSION         1
+#define  USB_DEVICE_MINOR_VERSION         0
+#define  USB_DEVICE_POWER                 100 // Consumption on Vbus line (mA)
+#define  USB_DEVICE_ATTR                  \
+	(USB_CONFIG_ATTR_SELF_POWERED)
 // (USB_CONFIG_ATTR_BUS_POWERED)
 //	(USB_CONFIG_ATTR_REMOTE_WAKEUP|USB_CONFIG_ATTR_SELF_POWERED)
 //	(USB_CONFIG_ATTR_REMOTE_WAKEUP|USB_CONFIG_ATTR_BUS_POWERED)
@@ -76,9 +81,9 @@
  */
 //! To authorize the High speed
 #if (UC3A3||UC3A4)
-	#define  USB_DEVICE_HS_SUPPORT
+#define  USB_DEVICE_HS_SUPPORT
 #elif (SAM3XA||SAM3U)
-	#define  USB_DEVICE_HS_SUPPORT
+#define  USB_DEVICE_HS_SUPPORT
 #endif
 //@}
 
@@ -87,15 +92,20 @@
  * USB Device Callbacks definitions (Optional)
  * @{
  */
-#define  UDC_VBUS_EVENT(b_vbus_high)		main_vbus_action(b_vbus_high)
-#define  UDC_SOF_EVENT()					main_sof_action()
-#define  UDC_SUSPEND_EVENT()				main_suspend_action()
-#define  UDC_RESUME_EVENT()					main_resume_action()
+#define  UDC_VBUS_EVENT(b_vbus_high)
+#define  UDC_SOF_EVENT()                  main_sof_action()
+#define  UDC_SUSPEND_EVENT()              main_suspend_action()
+#define  UDC_RESUME_EVENT()               main_resume_action()
 //! Mandatory when USB_DEVICE_ATTR authorizes remote wakeup feature
 // #define  UDC_REMOTEWAKEUP_ENABLE()        user_callback_remotewakeup_enable()
 // extern void user_callback_remotewakeup_enable(void);
 // #define  UDC_REMOTEWAKEUP_DISABLE()       user_callback_remotewakeup_disable()
 // extern void user_callback_remotewakeup_disable(void);
+#ifdef USB_DEVICE_LPM_SUPPORT
+#define  UDC_SUSPEND_LPM_EVENT()          main_suspend_lpm_action()
+#define  UDC_REMOTEWAKEUP_LPM_ENABLE()    main_remotewakeup_lpm_enable()
+#define  UDC_REMOTEWAKEUP_LPM_DISABLE()   main_remotewakeup_lpm_disable()
+#endif
 //! When a extra string descriptor must be supported
 //! other than manufacturer, product and serial string
 // #define  UDC_GET_EXTRA_STRING()
@@ -119,7 +129,7 @@
 //! Interface callback definition
 #define  UDI_CDC_ENABLE_EXT(port)         main_cdc_enable(port)
 #define  UDI_CDC_DISABLE_EXT(port)        main_cdc_disable(port)
-#define  UDI_CDC_RX_NOTIFY(port)          usb_rx_notify(port)
+#define  UDI_CDC_RX_NOTIFY(port)          uart_rx_notify(port)
 #define  UDI_CDC_TX_EMPTY_NOTIFY(port)
 #define  UDI_CDC_SET_CODING_EXT(port,cfg) uart_config(port,cfg)
 #define  UDI_CDC_SET_DTR_EXT(port,set)    main_cdc_set_dtr(port,set)
@@ -129,10 +139,15 @@
 //! to reduce CDC buffers size
 //#define  UDI_CDC_LOW_RATE
 
-#define  UDI_CDC_DEFAULT_RATE				921600
-#define  UDI_CDC_DEFAULT_STOPBITS			CDC_STOP_BITS_1
-#define  UDI_CDC_DEFAULT_PARITY				CDC_PAR_NONE
-#define  UDI_CDC_DEFAULT_DATABITS			8
+//! Default configuration of communication port
+#if BOARD == UC3B_BOARD_CONTROLLER
+# define  UDI_CDC_DEFAULT_RATE             57600
+#else
+# define  UDI_CDC_DEFAULT_RATE             115200
+#endif
+#define  UDI_CDC_DEFAULT_STOPBITS         CDC_STOP_BITS_1
+#define  UDI_CDC_DEFAULT_PARITY           CDC_PAR_NONE
+#define  UDI_CDC_DEFAULT_DATABITS         8
 //@}
 //@}
 

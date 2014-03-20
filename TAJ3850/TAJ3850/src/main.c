@@ -6,20 +6,20 @@ static volatile bool main_b_cdc_enable = false;
  */
 int main(void)
 {
-	// Initialise system clocks.
-	sysclk_init();
-	
 	// Enable all interrupts.
 	irq_initialize_vectors();
 	cpu_irq_enable();
 	
-	// Initialise board GPIO mappings.
-	board_init();
-	
 	// Initialize the sleep manager
 	sleepmgr_init();
 
-	// Start USB stack to authorize VBus monitoring
+	// Initialise system clocks.
+	sysclk_init();
+	
+	// Initialise board GPIO mappings.
+	board_init();
+	
+	// Start USB stack to authorize VBus monitoring.
 	udc_start();
 
 	while (true)

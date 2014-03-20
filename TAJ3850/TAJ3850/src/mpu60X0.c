@@ -5,30 +5,36 @@ int initMPU60X0(void)
 {
 	twi_options_t twi_options;
 	
-	twi_options.pba_hz = FOSC0;
-	twi_options.speed  = MPU60X0_SPEED;
-	twi_options.chip   = MPU60X0_BASE_ADDRESS;
+	twi_options.master_clk	= BOARD_MCK;
+	twi_options.speed		= MPU60X0_SPEED;
+	twi_options.chip		= MPU60X0_BASE_ADDRESS;
 
 	// Enable External Interrupt Controller Line.
-	eic_enable_line(&AVR32_EIC, MPU60X0_BODY_INT_LINE);
-	eic_enable_line(&AVR32_EIC, MPU60X0_HEAD_INT_LINE);
-
 	// Enable interrupts with priority higher than USB.
-	irq_register_handler(MPU60X0BodyInterrupt, MPU60X0_BODY_INT_IRQ, 3);
-	irq_register_handler(MPU60X0HeadInterrupt, MPU60X0_HEAD_INT_IRQ, 3);
-
+	pio_set_input(PIOA, MPU60X0_BODY_INT_PIN, MPU60X0_BODY_INT_FUNCTION);
+	pio_configure_interrupt(PIOA, MPU60X0_BODY_INT_PIN, MPU60X0_BODY_INT_FUNCTION);
+	pio_handler_set(PIOA, ID_PIOA, MPU60X0_BODY_INT_PIN, PIO_IT_RISE_EDGE, MPU60X0BodyInterrupt);
+	
+	pio_set_input(PIOA, MPU60X0_HEAD_INT_PIN, MPU60X0_HEAD_INT_FUNCTION);
+	pio_configure_interrupt(PIOA, MPU60X0_HEAD_INT_PIN, MPU60X0_HEAD_INT_FUNCTION);
+	pio_handler_set(PIOA, ID_PIOA, MPU60X0_HEAD_INT_PIN, PIO_IT_RISE_EDGE, MPU60X0HeadInterrupt);
+	
+	NVIC_EnableIRQ(PIOA_IRQn);
+	pio_enable_interrupt(PIOA, MPU60X0_BODY_INT_PIN);
+	pio_enable_interrupt(PIOA, MPU60X0_HEAD_INT_PIN);
+	
 	// Initialize TWI driver with options.
-	if (TWI_SUCCESS != twi_master_init(&AVR32_TWI, &twi_options))
+	if (TWI_SUCCESS != twi_master_init(TWI0, &twi_options))
 	{
 		// Disable the interrupts.
-		eic_disable_line(&AVR32_EIC, MPU60X0_HEAD_INT_LINE);
-		eic_disable_line(&AVR32_EIC, MPU60X0_BODY_INT_LINE);
+		pio_disable_interrupt(PIOA, MPU60X0_BODY_INT_PIN);
+		pio_disable_interrupt(PIOA, MPU60X0_HEAD_INT_PIN);
 	
 		return(-1);
 	}
 
 	// Enable both RX and TX
-	(&AVR32_TWI)->ier = AVR32_TWI_IER_TXRDY_MASK | AVR32_TWI_IER_RXRDY_MASK;
+	TWI0->TWI_IER = TWI_IER_TXRDY | TWI_IER_RXRDY;
 
 	return(0);
 }
@@ -99,9 +105,34 @@ int configureMPU60X0(int8_t mpuAddress, int8_t gyroFullScale, int8_t accelFullSc
 	return(0);
 }
 
+int disableMPU60X0(void)
+{
+	uint8_t data;
+	
+	// Put MPUs into sleep mode.
+	data = MPU60X0_MPU60X0_SLEEP_MODE;
+			
+	if (sendMPUPacket(MPU60X0_ADDRESS_BODY, MPU60X0_PWR_MGMT_1, &data, 1) != 0)
+	{
+		return(-1);
+	}
+
+	if (sendMPUPacket(MPU60X0_ADDRESS_HEAD, MPU60X0_PWR_MGMT_1, &data, 1) != 0)
+	{
+		return(-1);
+	}
+
+	// Close TWI/I2C port.
+	TWI0->TWI_IDR = 0xFFFFFFFF;
+
+	// Disable the interrupts.
+	pio_disable_interrupt(PIOA, MPU60X0_BODY_INT_PIN);
+	pio_disable_interrupt(PIOA, MPU60X0_HEAD_INT_PIN);
+}
+
 int8_t sendMPUPacket(int8_t mpuAddress, uint8_t mpuRegisterAddress, volatile void *data, uint8_t dataLength)
 {
-	twi_package_t packet;
+	twi_packet_t packet;
 	int8_t bError = 0;
 	
 	// Address the MPU in the body.
@@ -122,7 +153,7 @@ int8_t sendMPUPacket(int8_t mpuAddress, uint8_t mpuRegisterAddress, volatile voi
 	// How many bytes do we want to write.
 	packet.length = dataLength;
 
-	if (TWI_SUCCESS != twi_master_write(&AVR32_TWI, &packet))
+	if (TWI_SUCCESS != twi_master_write(TWI0, &packet))
 	{
 		bError = -1;
 	}
@@ -132,7 +163,7 @@ int8_t sendMPUPacket(int8_t mpuAddress, uint8_t mpuRegisterAddress, volatile voi
 
 int requestMPUPacket(int8_t mpuAddress, uint8_t mpuRegisterAddress, volatile void *data, uint8_t dataLength)
 {
-	twi_package_t packet;
+	twi_packet_t packet;
 	int8_t bError = 0;
 
 	// Address the MPU in the body.
@@ -153,7 +184,7 @@ int requestMPUPacket(int8_t mpuAddress, uint8_t mpuRegisterAddress, volatile voi
 	// How many bytes do we want to write.
 	packet.length = dataLength;
 
-	if (TWI_SUCCESS != twi_master_read(&AVR32_TWI, &packet))
+	if (TWI_SUCCESS != twi_master_read(TWI0, &packet))
 	{
 		bError = -1;
 	}
@@ -199,7 +230,7 @@ void MPU60X0IntteruptController(uint8_t mpuAddress, uint8_t sensor, uint8_t *gyr
 	}
 }
 
-__attribute__((__interrupt__)) void MPU60X0BodyInterrupt(void)
+void MPU60X0BodyInterrupt(uint32_t a, uint32_t b)
 {
 	static uint8_t  gyroReadingOffset = 0;
 	static uint8_t accelReadingOffset = 0;
@@ -208,13 +239,13 @@ __attribute__((__interrupt__)) void MPU60X0BodyInterrupt(void)
 	MPU60X0IntteruptController(MPU60X0_ADDRESS_BODY, 0, &gyroReadingOffset, &accelReadingOffset, &tempReadingOffset);	
 	
 	// Mark interrupt as handled.
-	eic_clear_interrupt_line(&AVR32_EIC, MPU60X0_BODY_INT_LINE);
+	pio_disable_interrupt(PIOA, MPU60X0_BODY_INT_PIN);
 
 	// Average the stored readings.
 	storeAveragedReadings();
 }
 
-__attribute__((__interrupt__)) void MPU60X0HeadInterrupt(void)
+void MPU60X0HeadInterrupt(uint32_t a, uint32_t b)
 {
 	static uint8_t  gyroReadingOffset = 0;
 	static uint8_t accelReadingOffset = 0;
@@ -223,7 +254,7 @@ __attribute__((__interrupt__)) void MPU60X0HeadInterrupt(void)
 	MPU60X0IntteruptController(MPU60X0_ADDRESS_HEAD, 1, &gyroReadingOffset, &accelReadingOffset, &tempReadingOffset);
 	
 	// Mark interrupt as handled.
-	eic_clear_interrupt_line(&AVR32_EIC, MPU60X0_HEAD_INT_LINE);
+	pio_disable_interrupt(PIOA, MPU60X0_HEAD_INT_PIN);
 
 	// Average the stored readings.
 	storeAveragedReadings();
@@ -250,7 +281,7 @@ void storeAveragedReadings(void)
 			
 			// (RAM + (GYRO_X_B0 + sensorAxis) + (sensorLocation * (GYRO_X_H0 - GYRO_X_B0))))
 			// RAM_Start_Address + (Sensor_Axis_Offset) + (Sensor_Location_Offset)
-			flashc_memcpy((RAM + (GYRO_X_B0 + sensorAxis) + (sensorLocation * (GYRO_X_H0 - GYRO_X_B0))), &result, sizeof(float), false);
+			flash_write((RAM + (GYRO_X_B0 + sensorAxis) + (sensorLocation * (GYRO_X_H0 - GYRO_X_B0))), &result, sizeof(float), false);
 			
 			result = 0.0;
 		}
@@ -270,7 +301,7 @@ void storeAveragedReadings(void)
 			
 			// (RAM + (ACCEL_X_B0 + sensorAxis) + (sensorLocation * (ACCEL_X_H0 - ACCEL_X_B0))))
 			// RAM_Start_Address + (Sensor_Axis_Offset) + (Sensor_Location_Offset)
-			flashc_memcpy((RAM + (ACCEL_X_B0 + sensorAxis) + (sensorLocation * (ACCEL_X_H0 - ACCEL_X_B0))), &result, sizeof(float), false);
+			flash_write((RAM + (ACCEL_X_B0 + sensorAxis) + (sensorLocation * (ACCEL_X_H0 - ACCEL_X_B0))), &result, sizeof(float), false);
 			
 			result = 0.0;
 		}
@@ -289,7 +320,7 @@ void storeAveragedReadings(void)
 			
 		// (RAM + TEMP_B0 + (sensorLocation * (TEMP_H0 - TEMP_B0))))
 		// RAM_Start_Address + Sensor_Offset + (Sensor_Location_Offset)
-		flashc_memcpy((RAM + TEMP_B0 + (sensorLocation * (TEMP_H0 - TEMP_B0))), &result, sizeof(float), false);
+		flash_write((RAM + TEMP_B0 + (sensorLocation * (TEMP_H0 - TEMP_B0))), &result, sizeof(float), false);
 			
 		result = 0.0;
 	}

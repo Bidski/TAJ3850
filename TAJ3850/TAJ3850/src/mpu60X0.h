@@ -39,14 +39,10 @@ typedef enum
 
 #define MPU60X0_SPEED				400000		// Speed of TWI (400kHz)
 
-#define MPU60X0_BODY_INT_PIN		AVR32_EIC_EXTINT_2_PIN
-#define MPU60X0_HEAD_INT_PIN		AVR32_EIC_EXTINT_5_PIN
-#define MPU60X0_BODY_INT_FUNCTION	AVR32_EIC_EXTINT_2_FUNCTION
-#define MPU60X0_HEAD_INT_FUNCTION	AVR32_EIC_EXTINT_5_FUNCTION
-#define MPU60X0_BODY_INT_LINE		AVR32_EIC_INT2
-#define MPU60X0_HEAD_INT_LINE		AVR32_EIC_INT5
-#define MPU60X0_BODY_INT_IRQ		AVR32_EIC_IRQ_2
-#define MPU60X0_HEAD_INT_IRQ		AVR32_EIC_IRQ_5
+#define MPU60X0_BODY_INT_PIN		PIO_PA25
+#define MPU60X0_HEAD_INT_PIN		PIO_PA26
+#define MPU60X0_BODY_INT_FUNCTION	(PIO_TYPE_PIO_INPUT | PIO_IT_RISE_EDGE | PIO_DEFAULT)
+#define MPU60X0_HEAD_INT_FUNCTION	(PIO_TYPE_PIO_INPUT | PIO_IT_RISE_EDGE | PIO_DEFAULT)
 
 #define NUM_SENSORS					0x03
 #define NUM_SENSOR_LOCATIONS		0x02
@@ -237,11 +233,12 @@ typedef enum
  ********************************************/
 int		initMPU60X0(void);
 int		configureMPU60X0(int8_t mpuAddress, int8_t gyroFullScale, int8_t accelFullScale, int8_t DPLFConfig);
+int		disableMPU60X0(void);
 int8_t	sendMPUPacket(int8_t mpuAddress, uint8_t mpuRegisterAddress, volatile void *data, uint8_t dataLength);
 int		requestMPUPacket(int8_t mpuAddress, uint8_t mpuRegisterAddress, volatile void *data, uint8_t dataLength);
 
-void	MPU60X0HeadInterrupt(void);
-void	MPU60X0BodyInterrupt(void);
+void	MPU60X0HeadInterrupt(uint32_t a, uint32_t b);
+void	MPU60X0BodyInterrupt(uint32_t a, uint32_t b);
 void	MPU60X0IntteruptController(uint8_t mpuAddress, uint8_t sensor, uint8_t *gyroReadingOffset, uint8_t *accelReadingOffset, uint8_t *tempReadingOffset);
 
 void	storeAveragedReadings(void);

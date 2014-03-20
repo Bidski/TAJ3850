@@ -4,7 +4,7 @@
 /*! \brief Called by CDC interface
  * Callback running when CDC device have received data
  */
-void usb_rx_notify(uint8_t port);
+void uart_rx_notify(uint8_t port);
 
 /*! \brief Configures communication line
  *
