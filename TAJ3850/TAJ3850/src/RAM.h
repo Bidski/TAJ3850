@@ -10,11 +10,11 @@
 #define RAM_H_
 
 /*
-	00 (0x00) Model Number(L)			Default: 0x0A.
-	01 (0x01) Model Number(H)			Default: 0x0F.
-	02 (0x02) Firmware Version			Default: 0x01.
+	00 (0x00) Model Number(L)			Default: 0x0A. (READ ONLY)
+	01 (0x01) Model Number(H)			Default: 0x0F. (READ ONLY)
+	02 (0x02) Firmware Version			Default: 0x01. (READ ONLY)
 	03 (0x03) Dynamixel ID				Default: 200 (0xC8).
-	04 (0x04) Dynamixel Baud Rate		Default: 0x03 (0x01 = 1Mbps, 0x02 = 2Mbps, 0x03 = 3Mbps).
+	04 (0x04) Dynamixel Baud Rate		Default: 0x06 (0x01 = 0.5Mbps, 0x02 = 1Mbps, 0x03 = 1.5bps, 0x04 = 2Mbps, 0x05 = 2.5Mbps, 0x06 = 3Mbps).
 	----------------------------
 	20 (0X14) Dynamixel Power			0 = Dynamixels OFF.
 	21 (0X15) LED Panel					Bits 7-3 UNUSED. Bit 2 = LED4 Status. Bit 1 = LED3 Status. Bit 0 = LED2 Status.
@@ -22,8 +22,10 @@
 	23 (0X17) LED 5 (H)					Bits 14-10 Blue value. Bits 9-5 Green value. Bits 4-0 Red value.
 	24 (0X18) LED 6 (L)					Bit 15 UNUSED.
 	25 (0X19) LED 6 (H)					Bits 14-10 Blue value. Bits 9-5 Green value. Bits 4-0 Red value.
-	26 (0X1A) Button					Bits 7-2 UNUSED. Bit 1 = Status of START button. Bit 0 = Status of MODE button.
+	26 (0X1A) Button					Bits 7-2 UNUSED. Bit 1 = Status of START button. Bit 0 = Status of MODE button. (READ ONLY)
+	27 (0X1B) MPU Settings				Bit 7 UNUSED. Bits 6-4 DLPF. Bits 3-2 Gyro. Bits 1-0 Accelerometer.
 	----------------------------
+	BEGIN READ ONLY
 	40 (0x28) Gyro_X_B					32-bit float. Gyroscope X-Axis reading.
 	41 (0x29)
 	42 (0x2A)
@@ -80,6 +82,7 @@
 	93 (0x5D)
 	94 (0x5E)
 	95 (0x5F)
+	END READ ONLY
 */
 
 // We only need to store model number, firmware version, dynamixel id, and baud rate in flash memory.
