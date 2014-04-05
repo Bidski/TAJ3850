@@ -76,20 +76,24 @@ uint8_t isValidInstruction(uint8_t instruction);
  ********************************************/
 static volatile sam_usart_opt_t	usart_options;
 
-static volatile uint8_t			PIDMap[0xFF] = {0xFF};																									// A mapping between PIDs and USART buses.
+static volatile uint8_t			PIDMap[0xFF] = {0xFF};																												// A mapping between PIDs and USART buses.
 
 static volatile uint8_t			txCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS][MAX_PACKET_LENGTH] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)] = {0}};		// Transmit circular buffers.
 static volatile uint8_t			rxCircBuffer[NUM_BUSES][NUM_IDS_PER_BUS][MAX_PACKET_LENGTH] = {[0 ... (NUM_BUSES - 1)][0 ... (NUM_IDS_PER_BUS -  1)] = {0}};		// Receive circular buffers.
-static volatile uint8_t			txHead[NUM_BUSES] = {0};																								// Pointer to the head of each transmit circular buffer.
-static volatile uint8_t			txTail[NUM_BUSES] = {0};																								// Pointer to the tail of each transmit circular buffer.
-static volatile uint8_t			rxHead[NUM_BUSES] = {0};																								// Pointer to the head of each receive circular buffer.
-static volatile uint8_t			rxTail[NUM_BUSES] = {0};																								// Pointer to the tail of each receive circular buffer.
-static volatile Usart			*BUS[NUM_BUSES] = {0};																									// Handle to each USART device.
+static volatile uint8_t			txHead[NUM_BUSES] = {0};																											// Pointer to the head of each transmit circular buffer.
+static volatile uint8_t			txTail[NUM_BUSES] = {0};																											// Pointer to the tail of each transmit circular buffer.
+static volatile uint8_t			rxHead[NUM_BUSES] = {0};																											// Pointer to the head of each receive circular buffer.
+static volatile uint8_t			rxTail[NUM_BUSES] = {0};																											// Pointer to the tail of each receive circular buffer.
+static volatile Usart			*BUS[NUM_BUSES] = {0};																												// Handle to each USART device.
+
+static uint8_t					regWriteBuffer[MAX_PARAMETERS] = {0};																								// Buffer to store parameters for REG WRITE and ACTION function.
+static uint8_t					registededInstruction = 0;																											// Registered Instruction for REG WRITE and ACTION functions.
+static uint8_t					regWriteLength = 0;																													// Length of parameters to copy to RAM on ACTION call.
 
 const uint8_t					DEFAULT_RAM[RAM_TABLE_SIZE] = {MODEL_NUMBER_L_DEFAULT, MODEL_NUMBER_H_DEFAULT, FIRMWARE_VERSION_DEFAULT, DYNAMIXEL_ID_DEFAULT, BAUD_RATE_DEFAULT};
 	
-__attribute__((__section__(".flash_nvram"))) uint8_t RAM[RAM_TABLE_SIZE];																					// Store RAM table in flash NVRAM.
-//__attribute__((__section__(".userpage"))) static uint8_t RAM[RAM_TABLE_SIZE];																					// Store RAM table in flash user page.
+__attribute__((__section__(".flash_nvram"))) uint8_t RAM[RAM_TABLE_SIZE];																							// Store RAM table in flash NVRAM.
+//__attribute__((__section__(".userpage"))) static uint8_t RAM[RAM_TABLE_SIZE];																						// Store RAM table in flash user page.
 
 
 
@@ -461,7 +465,7 @@ void processPacket(void)
 							txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
 							
 							// Write data to RAM.
-							memcpy(&RAM[packet[PACKET_PARAMETERS_OFFSET]], (uint8_t *)&txCircBuffer[bus][txHead[bus]][PACKET_PARAMETERS_OFFSET + 1], (packet[PACKET_LENGTH_OFFSET] - 3) * sizeof(uint8_t));
+							memcpy(&RAM[packet[PACKET_PARAMETERS_OFFSET]], (uint8_t *)&rxCircBuffer[bus][rxHead[bus]][PACKET_PARAMETERS_OFFSET + 1], (packet[PACKET_LENGTH_OFFSET] - 3) * sizeof(uint8_t));
 						}
 						else
 						{
@@ -498,6 +502,29 @@ void processPacket(void)
 						 * Checksum...:	~((sum of parameters + instruction + length + id) & 0xFF).
 						 */
 						
+						// Generate response packet.
+						flags = cpu_irq_save();
+
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_1_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_2_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_ID_OFFSET]				= RAM[DYNAMIXEL_ID];
+						txCircBuffer[bus][txHead[bus]][PACKET_LENGTH_OFFSET]			= 0x02;
+						txCircBuffer[bus][txHead[bus]][PACKET_ERROR_OFFSET]				= NO_ERROR;
+						txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
+						
+						// Write data to buffer.
+						memcpy(regWriteBuffer, (uint8_t *)&rxCircBuffer[bus][rxHead[bus]][PACKET_PARAMETERS_OFFSET + 1], (packet[PACKET_LENGTH_OFFSET] - 3) * sizeof(uint8_t));
+						registededInstruction = 1;
+						
+						txHead[bus]++;
+
+						if (txHead[bus] >= NUM_BUSES)
+						{
+							txHead[bus] = 0;
+						}
+
+						cpu_irq_restore(flags);
+						
 						break;
 					}
 			
@@ -514,6 +541,29 @@ void processPacket(void)
 						 * Parameter..: No parameters.
 						 * Checksum...:	~((instruction + length + id) & 0xFF).
 						 */
+						
+						// Generate response packet.
+						flags = cpu_irq_save();
+
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_1_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_2_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_ID_OFFSET]				= RAM[DYNAMIXEL_ID];
+						txCircBuffer[bus][txHead[bus]][PACKET_LENGTH_OFFSET]			= 0x02;
+						txCircBuffer[bus][txHead[bus]][PACKET_ERROR_OFFSET]				= NO_ERROR;
+						txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
+						
+						// Write data to buffer.
+						memcpy(&RAM[regWriteBuffer[0]], regWriteBuffer, () * sizeof(uint8_t));
+						registededInstruction = 0;
+						
+						txHead[bus]++;
+
+						if (txHead[bus] >= NUM_BUSES)
+						{
+							txHead[bus] = 0;
+						}
+
+						cpu_irq_restore(flags);
 						
 						break;
 					}
