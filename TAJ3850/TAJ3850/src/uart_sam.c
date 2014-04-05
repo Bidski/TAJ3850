@@ -393,31 +393,39 @@ void processPacket(void)
 						 * Checksum...:	~((sum of parameters + instruction + length + id) & 0xFF).
 						 */
 						
+						// Generate response packet.
+						flags = cpu_irq_save();
+
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_1_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_2_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_ID_OFFSET]				= RAM[DYNAMIXEL_ID];
+						
 						// Make sure address is within range.
 						if ((packet[PACKET_PARAMETERS_OFFSET] < RAM_TABLE_SIZE) && ((packet[PACKET_PARAMETERS_OFFSET] + packet[PACKET_PARAMETERS_OFFSET + 1]) < RAM_TABLE_SIZE))
 						{
-							// Generate response packet.
-							flags = cpu_irq_save();
-
-							txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_1_OFFSET]		= 0xFF;
-							txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_2_OFFSET]		= 0xFF;
-							txCircBuffer[bus][txHead[bus]][PACKET_ID_OFFSET]				= RAM[DYNAMIXEL_ID];
 							txCircBuffer[bus][txHead[bus]][PACKET_LENGTH_OFFSET]			= 0x02 + packet[PACKET_PARAMETERS_OFFSET + 1];
 							txCircBuffer[bus][txHead[bus]][PACKET_ERROR_OFFSET]				= NO_ERROR;
 							txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
 							
+							// Read data from RAM and copy to parameters
 							memcpy((uint8_t *)&txCircBuffer[bus][txHead[bus]][PACKET_PARAMETERS_OFFSET], &RAM[packet[PACKET_PARAMETERS_OFFSET]], packet[PACKET_PARAMETERS_OFFSET + 1] * sizeof(uint8_t));
-							
-													
-							txHead[bus]++;
-
-							if (txHead[bus] >= NUM_BUSES)
-							{
-								txHead[bus] = 0;
-							}
-
-							cpu_irq_restore(flags);
 						}
+						else
+						{
+							// Command is out of range.
+							txCircBuffer[bus][txHead[bus]][PACKET_LENGTH_OFFSET]			= 0x02;
+							txCircBuffer[bus][txHead[bus]][PACKET_ERROR_OFFSET]				= RANGE_ERROR;
+							txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
+						}
+						
+						txHead[bus]++;
+
+						if (txHead[bus] >= NUM_BUSES)
+						{
+							txHead[bus] = 0;
+						}
+
+						cpu_irq_restore(flags);
 						
 						break;
 					}
@@ -437,6 +445,39 @@ void processPacket(void)
 						 *				N-th byte.
 						 * Checksum...:	~((sum of parameters + instruction + length + id) & 0xFF).
 						 */
+						 
+						// Generate response packet.
+						flags = cpu_irq_save();
+
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_1_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_PREAMBLE_2_OFFSET]		= 0xFF;
+						txCircBuffer[bus][txHead[bus]][PACKET_ID_OFFSET]				= RAM[DYNAMIXEL_ID];
+						txCircBuffer[bus][txHead[bus]][PACKET_LENGTH_OFFSET]			= 0x02;
+						
+						// Make sure address is within range of writable RAM field.
+						if ((packet[PACKET_PARAMETERS_OFFSET] > 0X13) && ((packet[PACKET_PARAMETERS_OFFSET] + packet[PACKET_LENGTH_OFFSET - 1]) < 0X1C) && (packet[PACKET_PARAMETERS_OFFSET] != 0X1A))
+						{
+							txCircBuffer[bus][txHead[bus]][PACKET_ERROR_OFFSET]				= NO_ERROR;
+							txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
+							
+							// Write data to RAM.
+							memcpy(&RAM[packet[PACKET_PARAMETERS_OFFSET]], (uint8_t *)&txCircBuffer[bus][txHead[bus]][PACKET_PARAMETERS_OFFSET + 1], (packet[PACKET_LENGTH_OFFSET] - 3) * sizeof(uint8_t));
+						}
+						else
+						{
+							// Command is out of range.
+							txCircBuffer[bus][txHead[bus]][PACKET_ERROR_OFFSET]				= RANGE_ERROR;
+							txCircBuffer[bus][txHead[bus]][PACKET_CHECKSUM_OFFSET]			= calculateChecksum(txCircBuffer[bus][txHead[bus]]);
+						}
+						
+						txHead[bus]++;
+
+						if (txHead[bus] >= NUM_BUSES)
+						{
+							txHead[bus] = 0;
+						}
+
+						cpu_irq_restore(flags);
 						
 						break;
 					}
