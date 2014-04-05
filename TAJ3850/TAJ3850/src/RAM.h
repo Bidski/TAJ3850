@@ -103,6 +103,7 @@
 #define LED_6_L						0x18
 #define LED_6_H						0x19
 #define BUTTON						0x1A
+#define MPU_SETTINGS				0x1B
 
 #define GYRO_X_B0					0x28
 #define GYRO_X_B1					0x29
